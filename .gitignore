@@ -1,0 +1,14 @@
+# Local credentials. Commit only the example with placeholders.
+.env
+.env.*
+!.env.example
+*.env
+.ssh/
+*.key
+*.pem
+
+# Local Python environments and caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]

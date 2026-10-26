@@ -1,0 +1,132 @@
+/dts-v1/;
+/plugin/;
+
+/* Pollen C1 production schematic, direct stacking on ZERO 3W V1.12.
+ * Software I2C: physical pins 3/5. I2S3-M0: 12/35/38/40.
+ * Codec MCLK comes from HAT Y1 (12 MHz), not ZERO pin 13.
+ */
+/ {
+    metadata {
+        title = "Pollen Robot HAT C1 audio (software I2C + I2S3-M0)";
+        compatible = "radxa,zero3";
+        category = "audio";
+        exclusive = "GPIO1_A0", "GPIO1_A1", "GPIO3_A3", "GPIO3_A4",
+                    "GPIO3_A5", "GPIO3_A6", "i2s3_2ch", "i2c3";
+        description = "TLV320AIC3104 at 0x18, fixed local 12 MHz MCLK.";
+    };
+
+    fragment@0 {
+        target = <&pinctrl>;
+        __overlay__ {
+            pollen-hat {
+                pollen_hat_i2c_pins: i2c-pins {
+                    rockchip,pins = <1 0 0 &pcfg_pull_up>,
+                                    <1 1 0 &pcfg_pull_up>;
+                };
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            pollen_hat_mclk: pollen-hat-mclk {
+                compatible = "fixed-clock";
+                #clock-cells = <0>;
+                clock-frequency = <12000000>;
+            };
+
+            pollen_hat_dvdd: pollen-hat-dvdd {
+                compatible = "regulator-fixed";
+                regulator-name = "pollen-hat-1v8";
+                regulator-min-microvolt = <1800000>;
+                regulator-max-microvolt = <1800000>;
+                vin-supply = <&vcc3v3_sys>;
+                regulator-always-on;
+            };
+
+            pollen_hat_i2c: i2c-gpio-pollen-hat {
+                compatible = "i2c-gpio";
+                #address-cells = <1>;
+                #size-cells = <0>;
+                pinctrl-names = "default";
+                pinctrl-0 = <&pollen_hat_i2c_pins>;
+                /* 6 = active-high, single-ended, open-drain. */
+                sda-gpios = <&gpio1 0 6>;
+                scl-gpios = <&gpio1 1 6>;
+                i2c-gpio,delay-us = <10>;
+                i2c-gpio,timeout-ms = <100>;
+                status = "okay";
+
+                pollen_hat_codec: codec@18 {
+                    compatible = "ti,tlv320aic3104";
+                    reg = <0x18>;
+                    #sound-dai-cells = <0>;
+                    clocks = <&pollen_hat_mclk>;
+                    IOVDD-supply = <&vcc3v3_sys>;
+                    AVDD-supply = <&vcc3v3_sys>;
+                    DRVDD-supply = <&vcc3v3_sys>;
+                    DVDD-supply = <&pollen_hat_dvdd>;
+                    /* External mic bias is provided by C1 R22/R23, not MICBIAS.
+                     * RESET is pulled high by C1 R6; driver uses soft reset.
+                     */
+                    status = "okay";
+                };
+            };
+
+            pollen-hat-sound {
+                compatible = "simple-audio-card";
+                simple-audio-card,name = "PollenHATC1";
+                simple-audio-card,format = "i2s";
+                simple-audio-card,bitclock-master = <&pollen_hat_cpu>;
+                simple-audio-card,frame-master = <&pollen_hat_cpu>;
+                simple-audio-card,widgets =
+                    "Speaker", "Speaker",
+                    "Microphone", "External Mic L",
+                    "Microphone", "External Mic R",
+                    "Microphone", "Onboard Mic";
+                simple-audio-card,routing =
+                    "Speaker", "LLOUT",
+                    "Speaker", "RLOUT",
+                    "LINE1L", "External Mic L",
+                    "LINE1R", "External Mic R",
+                    "MIC2R", "Onboard Mic";
+
+                pollen_hat_cpu: simple-audio-card,cpu {
+                    sound-dai = <&i2s3_2ch>;
+                    /* Separate from the codec's physical 12 MHz oscillator.
+                     * Rockchip's internal master clock must be configured
+                     * explicitly so BCLK/LRCK are generated at 48 kHz.
+                     * This does not enable/export MCLK on header pin 13.
+                     */
+                    system-clock-frequency = <12288000>;
+                    system-clock-direction-out;
+                };
+
+                simple-audio-card,codec {
+                    sound-dai = <&pollen_hat_codec>;
+                    clocks = <&pollen_hat_mclk>;
+                    system-clock-frequency = <12000000>;
+                };
+            };
+        };
+    };
+
+    fragment@2 {
+        target = <&i2s3_2ch>;
+        __overlay__ {
+            pinctrl-names = "default";
+            pinctrl-0 = <&i2s3m0_sclk &i2s3m0_lrck
+                         &i2s3m0_sdi &i2s3m0_sdo>;
+            status = "okay";
+        };
+    };
+
+    /* Same conflict exclusion as Radxa's stock I2S3-M0 overlay. */
+    fragment@3 {
+        target = <&i2c3>;
+        __overlay__ {
+            status = "disabled";
+        };
+    };
+};
