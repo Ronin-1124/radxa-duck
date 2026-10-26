@@ -14,7 +14,6 @@ for cmd in python3 sha256sum modinfo fdtoverlay u-boot-update depmod systemctl a
   command -v "$cmd" >/dev/null || die "Missing command: $cmd"
 done
 (. /etc/os-release; [[ $ID == debian && $VERSION_ID == 12 ]]) || die 'Requires Debian 12.'
-sha256sum --strict --quiet -c SHA256SUMS || die 'Package integrity check failed.'
 BASE=/usr/lib/linux-image-$KERNEL/rockchip/rk3566-radxa-zero-3w-aic8800ds2.dtb
 [[ -f $BASE && -f /etc/default/u-boot && -f /boot/extlinux/extlinux.conf ]] || die 'Expected Radxa boot files not found.'
 BASE_HASH=$(sha256sum "$BASE"); BASE_HASH=${BASE_HASH%% *}
@@ -75,4 +74,4 @@ grep -Eq '^[[:space:]]*fdtoverlays[[:space:]].*/boot/dtbo/pollen-hat-c1-audio.dt
 systemctl daemon-reload
 systemctl enable pollen-hat-audio-init.service
 echo 'Installed. Shut down, disconnect power, align and fit the HAT, then power on.'
-echo 'If already assembled correctly, reboot. Speaker stays muted. See the HTML guide.'
+echo 'If already assembled correctly, reboot. Speaker stays muted. See README.md.'

@@ -13,17 +13,17 @@
 
 | 位置 | 用途 |
 | --- | --- |
-| [hardware/pollen-hat-c1-handoff](hardware/pollen-hat-c1-handoff/README.md) | 本项目保存的 HAT 驱动原包、源码、初始化配置与保留 NPU 的安装适配 |
+| [hardware/pollen-hat-c1-driver](hardware/pollen-hat-c1-driver/README.md) | 本项目保存的 HAT 驱动、源码、初始化配置与保留 NPU 的安装脚本 |
 | `.env` / [.env.example](.env.example) | 本地云端配置及不含真实密钥的示例；`.env` 不进入 Git |
 | `/home/radxa/microduck-eval`（板端） | 当前原型部署及运行环境；正式项目的部署目录尚未确定 |
-| `/home/ronin/workspace/Projects/rockchip` | 已克隆的 Rockchip 工具链与参考仓库，涉及 RKNN 时优先检查 |
 
-## 公开仓库参考：
 
+## 资料参考：
+
+- `/home/ronin/workspace/Projects/rockchip` 已克隆的 Rockchip 工具链与参考仓库，涉及 RKNN 时优先检查
 - DuckBuddy：<https://github.com/Animan-AI/DuckBuddy>
 - Pollen Robot HAT：<https://github.com/pollen-robotics/elec_RPI_Robot_HAT>
 
-复用上游代码、模型和音效前检查许可证，保留来源、版本与必要署名；参考项目的功能不等于本机已经具备的功能。
 
 ## 硬件与运行基线
 
