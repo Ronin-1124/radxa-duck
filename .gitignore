@@ -12,3 +12,12 @@
 venv/
 __pycache__/
 *.py[cod]
+
+# Downloaded development skill.
+/.agents/skills/ui-ux-pro-max/
+
+# Frontend dependencies and build output.
+/web/node_modules/
+/web/dist/
+/web/.vite/
+*.tsbuildinfo
