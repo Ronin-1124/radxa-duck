@@ -16,6 +16,10 @@ __pycache__/
 # Downloaded development skill.
 /.agents/skills/ui-ux-pro-max/
 
+# Private audio and local experiment outputs.
+/recordings/
+/results/
+
 # Frontend dependencies and build output.
 /web/node_modules/
 /web/dist/
