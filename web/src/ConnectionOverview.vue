@@ -45,13 +45,13 @@ const capabilities = [
 </script>
 
 <template>
-  <div class="connection-overview">
+  <div class="connection-overview ui-page">
     <section class="welcome-card" :aria-labelledby="titleId">
       <div class="welcome-copy">
         <p class="welcome-kicker">RADXA DUCK</p>
         <h2 :id="titleId">{{ t('title') }}</h2>
         <p class="welcome-description">{{ t('introduction') }}</p>
-        <RouterLink :to="{ name: 'device' }" class="device-link">
+        <RouterLink :to="{ name: 'device' }" class="device-link ui-button ui-button--primary">
           <span>{{ t('device') }}</span><ArrowRight :size="18" aria-hidden="true" />
         </RouterLink>
       </div>
@@ -71,7 +71,7 @@ const capabilities = [
 
     <section class="capabilities" :aria-labelledby="capabilitiesId">
       <header class="section-heading">
-        <h2 :id="capabilitiesId">{{ t('start') }}</h2>
+        <h2 :id="capabilitiesId" class="ui-section-title">{{ t('start') }}</h2>
         <p>{{ t('startHint') }}</p>
       </header>
       <div class="capability-grid">
@@ -95,7 +95,6 @@ const capabilities = [
 </template>
 
 <style scoped>
-.connection-overview { display: grid; gap: 32px; }
 .welcome-card {
   position: relative; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(220px, .75fr);
   align-items: center; gap: 28px; min-height: 300px; padding: 36px 40px;
@@ -107,12 +106,7 @@ const capabilities = [
 .welcome-kicker { margin: 0 0 14px; color: var(--accent); font-size: 11px; font-weight: 650; letter-spacing: .15em; }
 .welcome-copy h2 { margin: 0; max-width: 18ch; color: var(--text); font-size: clamp(26px, 2.4vw, 34px); font-weight: 600; letter-spacing: -.035em; line-height: 1.3; text-wrap: balance; }
 .welcome-description { max-width: 40ch; margin: 16px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.8; text-wrap: pretty; }
-.device-link {
-  display: inline-flex; align-items: center; justify-content: center; gap: 22px; min-height: 46px;
-  padding: 12px 18px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-  border-radius: var(--radius-control, 16px); background: var(--accent-soft); color: var(--accent);
-  font-size: 13px; font-weight: 600; line-height: 1.5; text-decoration: none; touch-action: manipulation;
-}
+.device-link { gap: 22px; }
 .device-link:focus-visible, .capability-card:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
 .device-link:active, .capability-card:active {
   background: color-mix(in srgb, var(--accent-soft) 75%, var(--surface));
@@ -138,7 +132,6 @@ const capabilities = [
 .art-dot-one { top: 30px; right: 33px; }
 .art-dot-two { left: 42px; bottom: 27px; width: 5px; height: 5px; }
 .section-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; margin-bottom: 18px; }
-.section-heading h2 { margin: 0; color: var(--text); font-size: 18px; line-height: 1.5; font-weight: 600; letter-spacing: -.02em; }
 .section-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .capability-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .capability-card {
@@ -169,7 +162,6 @@ const capabilities = [
   .capability-arrow { right: 22px; top: 25px; }
 }
 @media (max-width: 620px) {
-  .connection-overview { gap: 28px; }
   .welcome-card { grid-template-columns: minmax(0, 1fr); padding: 28px 24px; gap: 22px; }
   .welcome-copy h2 { max-width: 100%; }
   .welcome-description { margin-block: 12px 20px; }
@@ -189,22 +181,16 @@ const capabilities = [
   .privacy-note { align-items: flex-start; padding-inline: 2px; }
 }
 @media (hover: hover) and (pointer: fine) {
-  .device-link:hover { background: color-mix(in srgb, var(--accent) 9%, var(--accent-soft)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
   .capability-card:hover { border-color: color-mix(in srgb, var(--accent) 26%, var(--border)); box-shadow: var(--shadow-float, 0 12px 28px -12px rgb(22 40 16 / .14)); }
   .capability-card:hover .capability-arrow { color: var(--accent); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .welcome-card, .capabilities, .privacy-note { animation: overview-arrive 400ms var(--ease-out, cubic-bezier(.22, 1, .36, 1)) both; }
-  .capabilities { animation-delay: 25ms; }
-  .privacy-note { animation-delay: 50ms; }
-  .device-link, .capability-card { transition: transform 220ms var(--ease-out, cubic-bezier(.22, 1, .36, 1)), box-shadow 220ms ease, background-color var(--motion-fast, 180ms) ease, border-color var(--motion-fast, 180ms) ease; }
+  .capability-card { transition: transform 220ms var(--ease-out, cubic-bezier(.22, 1, .36, 1)), box-shadow 220ms ease, background-color var(--motion-fast, 180ms) ease, border-color var(--motion-fast, 180ms) ease; }
   .capability-arrow, .device-link > svg { transition: transform 220ms var(--ease-out, cubic-bezier(.22, 1, .36, 1)), color var(--motion-fast, 180ms) ease; }
-  @keyframes overview-arrive { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .capability-card:hover { transform: translateY(-4px); }
   .capability-card:hover .capability-arrow { transform: translate(2px, -2px); }
-  .device-link:hover { transform: translateY(-2px); }
   .device-link:hover > svg { transform: translateX(2px); }
   .capability-card:active, .device-link:active { transform: translateY(0); }
 }

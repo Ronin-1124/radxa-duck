@@ -5,20 +5,23 @@ import { useI18n } from 'vue-i18n'
 import { Blocks, Camera, ChevronRight, Cpu, Globe2, LayoutDashboard, Mic,
   Monitor, Moon, MoreHorizontal, Settings2, Sun, X } from '@lucide/vue'
 import PreferenceSelect from './PreferenceSelect.vue'
+import { provideUiPreferences } from './useUiPreferences'
+import './ui.css'
 
-type Locale = 'zh-CN' | 'en'
-type Theme = 'system' | 'light' | 'dark'
 type Connection = 'unknown' | 'connecting' | 'online' | 'offline'
 
 const props = withDefaults(defineProps<{
-  deviceName?: string
+  deviceName?: string | null
+  deviceHostname?: string | null
+  deviceStale?: boolean
   connection?: Connection
-}>(), { deviceName: 'Radxa ZERO 3W', connection: 'unknown' })
+}>(), { deviceName: null, deviceHostname: null, deviceStale: false, connection: 'unknown' })
 
 const messages = {
   'zh-CN': {
     console: '机器人控制台', navigation: '主导航', workspace: '工作空间',
     skip: '跳到主要内容', more: '更多', close: '关闭', currentDevice: '当前设备',
+    deviceUnknown: '尚未读取设备', deviceLastRead: '上次读取的设备信息',
     preferences: '界面偏好', language: '语言', appearance: '外观',
     system: '跟随系统', light: '浅色', dark: '深色', local: '局域网管理',
     themeHints: { system: '与设备外观保持一致', light: '明亮清晰，适合日间使用', dark: '柔和暗色，适合低光环境' },
@@ -38,6 +41,7 @@ const messages = {
   en: {
     console: 'Robot console', navigation: 'Main navigation', workspace: 'Workspace',
     skip: 'Skip to main content', more: 'More', close: 'Close', currentDevice: 'Current device',
+    deviceUnknown: 'Device not read', deviceLastRead: 'Last read device information',
     preferences: 'Interface preferences', language: 'Language', appearance: 'Appearance',
     system: 'System', light: 'Light', dark: 'Dark', local: 'Local network',
     themeHints: { system: 'Match device appearance', light: 'A clear view for daytime', dark: 'A softer view in low light' },
@@ -56,7 +60,7 @@ const messages = {
   },
 }
 
-const { locale } = useI18n({ useScope: 'global' })
+const { locale, theme, resolvedTheme, selectLocale, selectTheme } = provideUiPreferences()
 const { t } = useI18n({ useScope: 'local', inheritLocale: true, messages })
 const route = useRoute()
 const slots = useSlots()
@@ -66,8 +70,6 @@ const dialogTitleId = useId()
 const titleElement = ref<HTMLHeadingElement>()
 const moreDialog = ref<HTMLDialogElement>()
 const moreOpen = ref(false)
-const localeKey = 'radxa-duck.ui.locale'
-const themeKey = 'radxa-duck.ui.theme'
 
 const pages = [
   { id: 'overview', icon: LayoutDashboard }, { id: 'voice', icon: Mic },
@@ -78,42 +80,7 @@ const currentPage = computed(() => pages.find(page =>
   route.matched.some(record => record.name === page.id)) ?? pages[0])
 const moreActive = computed(() => ['device', 'settings'].includes(currentPage.value.id))
 
-function readPreference(key: string): string | null {
-  try { return window.localStorage.getItem(key) } catch { return null }
-}
-
-function savePreference(key: string, value: string): void {
-  // Preferences remain usable in memory when browser storage is unavailable.
-  try { window.localStorage.setItem(key, value) } catch { /* No persistent storage. */ }
-}
-
-function isLocale(value: unknown): value is Locale {
-  return value === 'zh-CN' || value === 'en'
-}
-
-function isTheme(value: unknown): value is Theme {
-  return value === 'system' || value === 'light' || value === 'dark'
-}
-
-function browserLocale(): Locale {
-  if (typeof navigator !== 'undefined') {
-    for (const language of navigator.languages) {
-      if (/^zh(?:-|$)/i.test(language)) return 'zh-CN'
-      if (/^en(?:-|$)/i.test(language)) return 'en'
-    }
-  }
-  return 'en'
-}
-
-const savedLocale = readPreference(localeKey)
-locale.value = isLocale(savedLocale) ? savedLocale : browserLocale()
-const savedTheme = readPreference(themeKey)
-const theme = ref<Theme>(isTheme(savedTheme) ? savedTheme : 'system')
-const darkQuery = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: dark)') : null
-const desktopQuery = typeof window !== 'undefined' ? window.matchMedia('(min-width: 960px)') : null
-const systemDark = ref(darkQuery?.matches ?? false)
-const resolvedTheme = computed(() => theme.value === 'system'
-  ? (systemDark.value ? 'dark' : 'light') : theme.value)
+const desktopQuery = window.matchMedia('(min-width: 960px)')
 const languageOptions = [
   { value: 'zh-CN', label: '简体中文', description: 'Simplified Chinese', lang: 'zh-CN' },
   { value: 'en', label: 'English', description: '英语', lang: 'en' },
@@ -124,24 +91,6 @@ const themeOptions = computed(() => [
   { value: 'system', label: t('system'), description: t('themeHints.system'), icon: Monitor },
 ])
 
-function selectLocale(value: string): void {
-  if (isLocale(value)) { locale.value = value; savePreference(localeKey, value) }
-}
-
-function selectTheme(value: string): void {
-  if (isTheme(value)) { theme.value = value; savePreference(themeKey, value) }
-}
-
-function syncStorage(event: StorageEvent): void {
-  if (event.key === localeKey || event.key === null) {
-    locale.value = isLocale(event.newValue) ? event.newValue : browserLocale()
-  }
-  if (event.key === themeKey || event.key === null) {
-    theme.value = isTheme(event.newValue) ? event.newValue : 'system'
-  }
-}
-
-function syncSystemTheme(event: MediaQueryListEvent): void { systemDark.value = event.matches }
 function closeMore(): void { moreDialog.value?.close(); moreOpen.value = false }
 function openMore(): void { moreDialog.value?.showModal(); moreOpen.value = true }
 function dismissBackdrop(event: MouseEvent): void {
@@ -163,13 +112,6 @@ function syncDesktop(event: MediaQueryListEvent): void {
   if (event.matches && moreOpen.value) { closeMore(); titleElement.value?.focus({ preventScroll: true }) }
 }
 
-watch([locale, resolvedTheme], ([language, appearance]) => {
-  if (typeof document === 'undefined') return
-  document.documentElement.lang = language
-  document.documentElement.dataset.theme = appearance
-  document.documentElement.style.colorScheme = appearance
-}, { immediate: true, flush: 'sync' })
-
 let hadRoute = route.matched.length > 0
 watch(() => route.fullPath, async () => {
   const moveFocus = hadRoute
@@ -181,14 +123,10 @@ watch(() => route.fullPath, async () => {
 })
 
 onMounted(() => {
-  darkQuery?.addEventListener('change', syncSystemTheme)
   desktopQuery?.addEventListener('change', syncDesktop)
-  window.addEventListener('storage', syncStorage)
 })
 onBeforeUnmount(() => {
-  darkQuery?.removeEventListener('change', syncSystemTheme)
   desktopQuery?.removeEventListener('change', syncDesktop)
-  window.removeEventListener('storage', syncStorage)
   closeMore()
 })
 </script>
@@ -219,8 +157,8 @@ onBeforeUnmount(() => {
       </nav>
       <div class="sidebar-device">
         <span class="eyebrow">{{ t('currentDevice') }}</span>
-        <div class="device-name"><Cpu :size="19" aria-hidden="true" /><span>{{ props.deviceName }}</span></div>
-        <small>{{ t('local') }}</small>
+        <div class="device-name" :title="props.deviceStale ? t('deviceLastRead') : undefined"><Cpu :size="19" aria-hidden="true" /><span>{{ props.deviceName || t('deviceUnknown') }}</span></div>
+        <small>{{ props.deviceHostname || t('local') }}</small>
       </div>
     </aside>
 
@@ -234,7 +172,7 @@ onBeforeUnmount(() => {
       </header>
       <div v-if="slots.activity" class="activity"><slot name="activity" /></div>
       <main :id="mainId" class="main" tabindex="-1">
-        <div class="page-heading">
+        <div :key="currentPage.id" class="page-heading">
           <div class="page-intro"><p class="eyebrow">{{ t('workspace') }}</p><h1 ref="titleElement" tabindex="-1">{{ t(`pages.${currentPage.id}`) }}</h1><p class="page-description">{{ t(`descriptions.${currentPage.id}`) }}</p></div>
           <div class="page-heading-end">
             <span class="connection" :data-state="props.connection" role="status"><span class="connection-dot" aria-hidden="true"></span>{{ t(`status.${props.connection}`) }}</span>
@@ -257,7 +195,7 @@ onBeforeUnmount(() => {
 
     <dialog :id="moreId" ref="moreDialog" class="more-dialog" :aria-labelledby="dialogTitleId" @close="moreOpen = moreDialog?.open ?? false" @click="dismissBackdrop" @keydown="keepMoreFocus">
       <div class="more-panel">
-        <div class="more-heading"><h2 :id="dialogTitleId">{{ t('more') }}</h2><button class="icon-button" :aria-label="t('close')" @click="closeMore"><X :size="22" aria-hidden="true" /></button></div>
+        <div class="more-heading"><h2 :id="dialogTitleId">{{ t('more') }}</h2><button class="icon-button ui-icon-button" :aria-label="t('close')" @click="closeMore"><X :size="22" aria-hidden="true" /></button></div>
         <nav :aria-label="t('more')">
           <RouterLink v-for="page in pages.slice(4)" :key="page.id" :to="{ name: page.id }" class="more-link" @click="closeMore">
             <component :is="page.icon" :size="22" aria-hidden="true" /><span>{{ t(`pages.${page.id}`) }}</span><ChevronRight :size="18" aria-hidden="true" />
@@ -337,7 +275,6 @@ h1 { width: fit-content; max-width: 100%; margin: 0; font-size: 32px; line-heigh
 .more-panel { padding: 20px 20px calc(24px + env(safe-area-inset-bottom)); }
 .more-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .more-heading h2 { margin: 0; font-size: 20px; font-weight: 600; }
-.icon-button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--radius-control); background: var(--background); }
 .more-link { display: flex; align-items: center; gap: 14px; min-height: 60px; padding: 12px; border-radius: var(--radius-control); }
 .nav-link:active, .mobile-link:active, .more-link:active, .icon-button:active { background: var(--accent-soft); color: var(--accent); }
 .more-link svg:last-child { margin-left: auto; }
@@ -370,7 +307,7 @@ h1 { width: fit-content; max-width: 100%; margin: 0; font-size: 32px; line-heigh
   .nav-link, .mobile-link, .more-link, .icon-button {
     transition: transform var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) ease, background-color var(--motion-fast) ease, color var(--motion-fast) ease;
   }
-  .page-heading { animation: shell-enter 360ms var(--ease-out) both; }
+  .page-heading { animation: ui-page-arrive 350ms var(--ease-out); }
   .more-dialog[open] .more-panel { animation: shell-enter 240ms var(--ease-out) both; }
   @keyframes shell-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 }

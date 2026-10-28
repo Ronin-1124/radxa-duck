@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, MessageSquareText, Mic, MicOff, ShieldCheck } from '@lucide/vue'
+import { MessageSquareText, Mic, MicOff, Square } from '@lucide/vue'
+import CaptureNotice from './CaptureNotice.vue'
+import InteractionControl from './InteractionControl.vue'
+import UiAlert from './UiAlert.vue'
+import UiEmptyState from './UiEmptyState.vue'
 
 type Connection = 'connecting' | 'online' | 'offline'
 type SpeechState = 'loading' | 'idle' | 'starting' | 'listening' | 'stopping' | 'error' | 'closed'
@@ -23,14 +27,19 @@ const { t } = useI18n({
     'zh-CN': {
       title: '语音识别', description: '开启后，对着小鸭说话，文字会实时显示在这里。',
       turnOn: '开启收音', turnOff: '关闭收音', sending: '正在发送…',
+      requestingStart: '正在请求开启', requestingStop: '正在请求停止', requestingHint: '等待设备确认操作。',
       connecting: '正在连接设备', offline: '连接已断开，正在重连', occupied: '其他页面正在使用麦克风',
+      connectingHint: '连接完成后，由你开启收音。', offlineHint: '连接恢复后，需要由你重新开启收音。',
+      occupiedHint: '请先在控制收音的页面结束任务。', errorHint: '请根据错误提示检查设备后重试。',
+      closedHint: '请等待语音服务恢复后重新开启。',
       states: { loading: '语音服务准备中', idle: '收音已关闭', starting: '正在开启麦克风', listening: '正在聆听', stopping: '正在关闭麦克风', error: '语音服务暂不可用', closed: '语音服务已停止' },
       live: '实时文字', draft: '识别中', liveHint: '文字会随说话更新，停顿后形成完整句子。',
       waiting: '正在听，试着说一句话…', startHint: '开启收音后，识别文字会出现在这里。',
       preparing: '正在准备收音，请稍候…', stopHint: '正在结束收音，未完成的文字不会保留。',
       history: '已识别的句子', recent: '最近 {count} 句', empty: '还没有完整句子',
       emptyHint: '说完后稍作停顿，就能在这里看到识别结果。', duration: '本次收音时长',
-      privacy: '声音来自板端麦克风。关闭收音、离开此页面或断开连接后，会停止采集。',
+      privacy: '声音来自小鸭的麦克风',
+      captureStop: '关闭收音、离开此页面或断开连接后，会停止采集。',
       retention: '仅显示本次会话最近 20 句，录音和文字不长期保存。',
       errors: {
         busy: '麦克风正在被其他任务使用，请稍后重试。', not_owner: '当前收音由其他页面控制。',
@@ -45,14 +54,19 @@ const { t } = useI18n({
     en: {
       title: 'Speech recognition', description: 'Turn on listening and speak to your Duck. Your words appear here as you talk.',
       turnOn: 'Start listening', turnOff: 'Stop listening', sending: 'Sending…',
+      requestingStart: 'Requesting start', requestingStop: 'Requesting stop', requestingHint: 'Waiting for the device to confirm the request.',
       connecting: 'Connecting to your Duck', offline: 'Connection lost. Reconnecting', occupied: 'The microphone is in use by another page',
+      connectingHint: 'Once connected, you choose when listening starts.', offlineHint: 'Start listening again after the connection returns.',
+      occupiedHint: 'Stop listening from the page that controls the microphone first.', errorHint: 'Check the device using the error details, then try again.',
+      closedHint: 'Wait for the speech service to return before starting again.',
       states: { loading: 'Preparing speech recognition', idle: 'Listening is off', starting: 'Starting the microphone', listening: 'Listening', stopping: 'Stopping the microphone', error: 'Speech recognition is unavailable', closed: 'Speech service stopped' },
       live: 'Live transcript', draft: 'In progress', liveHint: 'Words update while you speak. Pause briefly to finish a sentence.',
       waiting: 'Listening. Try saying something…', startHint: 'Start listening to see your words here.',
       preparing: 'Getting the microphone ready…', stopHint: 'Stopping. Unfinished words will be discarded.',
       history: 'Completed sentences', recent: 'Latest {count}', empty: 'No completed sentences yet',
       emptyHint: 'Pause briefly after speaking to see the result here.', duration: 'Listening time',
-      privacy: 'Audio comes from your Duck’s microphone. Capture stops when you switch it off, leave this page or disconnect.',
+      privacy: 'Audio comes from your Duck’s microphone',
+      captureStop: 'Capture stops when you switch off listening, leave this page or disconnect.',
       retention: 'Only the latest 20 sentences in this session are shown. Audio and transcripts are not kept long term.',
       errors: {
         busy: 'The microphone is in use. Please try again shortly.', not_owner: 'Another page controls this listening session.',
@@ -88,7 +102,8 @@ const transition = computed(() => snapshot.value?.state === 'stopping' || pendin
 const canToggle = computed(() => connection.value === 'online' && !!snapshot.value && !transition.value && !occupied.value
   && (active.value || (snapshot.value.ready && ['idle', 'error'].includes(snapshot.value.state))))
 const statusText = computed(() => connection.value !== 'online' ? t(connection.value)
-  : occupied.value ? t('occupied') : t(`states.${snapshot.value?.state ?? 'loading'}`))
+  : occupied.value ? t('occupied') : pending.value ? t(pending.value === 'start' ? 'requestingStart' : 'requestingStop')
+    : t(`states.${snapshot.value?.state ?? 'loading'}`))
 const errorText = computed(() => {
   const code = localError.value ?? snapshot.value?.error?.code
   return code ? t(`errors.${errorCodes.has(code) ? code : 'unknown'}`) : ''
@@ -100,6 +115,22 @@ const placeholder = computed(() => {
   if (snapshot.value?.state === 'stopping') return t('stopHint')
   return t('startHint')
 })
+const statusHint = computed(() => {
+  if (connection.value !== 'online') return t(`${connection.value}Hint`)
+  if (occupied.value) return t('occupiedHint')
+  if (pending.value) return t('requestingHint')
+  switch (snapshot.value?.state) {
+    case 'loading': return t('errors.not_ready')
+    case 'starting': return t('preparing')
+    case 'listening': return t('liveHint')
+    case 'stopping': return t('stopHint')
+    case 'error': return t('errorHint')
+    case 'closed': return t('closedHint')
+    default: return t('startHint')
+  }
+})
+const statusTone = computed(() => connection.value === 'offline' || !!errorText.value ? 'error'
+  : connection.value === 'online' && snapshot.value?.state === 'listening' && !occupied.value ? 'active' : 'neutral')
 const segments = computed(() => snapshot.value?.segments ?? [])
 watch(() => `${snapshot.value?.session_id ?? ''}:${segments.value.at(-1)?.id ?? ''}`, async () => {
   const node = historyElement.value
@@ -244,30 +275,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="speech-recognition">
+  <div class="speech-recognition ui-page">
     <section class="listening-card" :aria-labelledby="titleId">
-      <div class="listening-heading">
-        <span class="mic-symbol" aria-hidden="true"><Mic :size="26" :stroke-width="1.6" /></span>
-        <div class="listening-copy"><h2 :id="titleId">{{ t('title') }}</h2><p>{{ t('description') }}</p></div>
-      </div>
-      <div class="listening-controls">
-        <p class="speech-status" :data-active="snapshot?.state === 'listening' && connection === 'online'" role="status" aria-atomic="true">
-          <span aria-hidden="true"></span>{{ statusText }}
-        </p>
-        <button type="button" class="listening-toggle" role="switch" :aria-checked="active"
-          :aria-labelledby="titleId" :aria-describedby="hintId" :disabled="!canToggle" :aria-busy="pending !== null" @click="toggle">
-          <span class="toggle-track" aria-hidden="true"><span></span></span>
-          <span>{{ pending ? t('sending') : active ? t('turnOff') : t('turnOn') }}</span>
-        </button>
-      </div>
-      <p :id="hintId" class="listening-hint"><ShieldCheck :size="17" aria-hidden="true" />{{ t('privacy') }}</p>
+      <InteractionControl :title-id="titleId" :hint-id="hintId" :title="t('title')" :description="t('description')" :icon="Mic"
+        :action-icon="active ? Square : Mic" :action-label="pending ? t(pending === 'start' ? 'requestingStart' : 'requestingStop') : active ? t('turnOff') : t('turnOn')"
+        :disabled="!canToggle" :active="active" :busy="pending !== null || snapshot?.state === 'starting' || snapshot?.state === 'stopping'"
+        :status="statusText" :hint="statusHint" :status-state="connection === 'online' ? snapshot?.state ?? 'loading' : connection"
+        :tone="statusTone" @action="toggle" />
+      <UiAlert v-if="errorText" class="speech-error">{{ errorText }}</UiAlert>
     </section>
-
-    <p v-if="errorText" class="speech-error" role="alert"><AlertCircle :size="20" aria-hidden="true" /><span>{{ errorText }}</span></p>
 
     <section class="transcript-card" :aria-labelledby="liveTitleId">
       <header class="transcript-heading">
-        <div><h2 :id="liveTitleId">{{ t('live') }}</h2><p>{{ t('liveHint') }}</p></div>
+        <div><h2 :id="liveTitleId" class="ui-section-title">{{ t('live') }}</h2><p class="ui-section-description">{{ t('liveHint') }}</p></div>
         <span class="duration" :aria-label="t('duration')">{{ formatTime(snapshot?.audio_seconds ?? 0) }}</span>
       </header>
       <div class="live-transcript" :class="{ 'has-text': snapshot?.partial_text }">
@@ -283,35 +303,17 @@ onBeforeUnmount(() => {
             <span class="sentence-time" aria-hidden="true">{{ formatTime(segment.start_seconds) }}</span><p>{{ segment.text }}</p>
           </li>
         </ol>
-        <div v-else class="empty-history"><MessageSquareText :size="28" :stroke-width="1.5" aria-hidden="true" /><p>{{ t('empty') }}</p><span>{{ t('emptyHint') }}</span></div>
+        <UiEmptyState v-else class="empty-history" :icon="MessageSquareText" :title="t('empty')" :description="t('emptyHint')" />
       </div>
-      <p class="retention-note">{{ t('retention') }}</p>
     </section>
+    <CaptureNotice :source="t('privacy')" :notes="[t('captureStop'), t('retention')]" />
   </div>
 </template>
 
 <style scoped>
-.speech-recognition { display: grid; gap: 24px; min-width: 0; }
-.listening-card, .transcript-card { min-width: 0; padding: 28px 32px; border: 1px solid var(--border); border-radius: var(--radius-panel, 24px); background: var(--surface); box-shadow: var(--shadow-soft); }
-.listening-heading { display: flex; gap: 16px; align-items: flex-start; }
-.mic-symbol { display: grid; place-items: center; flex: 0 0 52px; height: 52px; border-radius: 18px; background: var(--accent-soft); color: var(--accent); }
-.listening-copy { min-width: 0; }
-h2 { margin: 0; color: var(--text); font-size: 20px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
-.listening-copy p, .transcript-heading p { margin: 7px 0 0; color: var(--muted); font-size: 14px; line-height: 1.75; text-wrap: pretty; }
-.listening-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; margin-top: 24px; }
-.speech-status { display: flex; gap: 9px; align-items: center; margin: 0; color: var(--muted); font-size: 14px; }
-.speech-status > span { flex: 0 0 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.speech-status[data-active="true"] { color: var(--online, var(--accent)); }
-.listening-toggle { display: inline-flex; justify-content: center; align-items: center; gap: 12px; min-height: 48px; min-width: 150px; padding: 8px 12px; border: 1px solid transparent; border-radius: var(--radius-control, 16px); background: transparent; color: var(--text); font: inherit; font-weight: 550; cursor: pointer; touch-action: manipulation; }
-.listening-toggle:disabled { opacity: .6; cursor: not-allowed; }
-.listening-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
-.toggle-track { flex: 0 0 52px; display: flex; align-items: center; height: 30px; padding: 3px; border: 1px solid var(--muted); border-radius: 99px; background: var(--surface); }
-.toggle-track > span { width: 22px; height: 22px; border-radius: 50%; background: var(--muted); }
-.listening-toggle[aria-checked="true"] .toggle-track { border-color: var(--accent); background: var(--accent); }
-.listening-toggle[aria-checked="true"] .toggle-track > span { transform: translateX(22px); background: var(--surface); }
-.listening-hint { display: flex; align-items: flex-start; gap: 8px; margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.8; }
-.listening-hint svg, .speech-error svg { flex-shrink: 0; margin-top: 2px; }
-.speech-error { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 16px 20px; border: 1px solid color-mix(in srgb, var(--offline) 35%, var(--border)); border-radius: var(--radius-control, 16px); background: var(--surface); color: var(--offline); font-size: 14px; line-height: 1.7; }
+.listening-card, .transcript-card { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel, 24px); background: var(--surface); box-shadow: var(--shadow-soft); }
+.listening-card :deep(.interaction-control) { margin-bottom: 0; }
+.speech-error { margin-top: 20px; }
 .transcript-heading, .history-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .duration { flex-shrink: 0; padding: 5px 10px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .live-transcript { display: flex; flex-direction: column; justify-content: center; min-height: 144px; margin-top: 24px; padding: 24px; border: 1px solid var(--border); border-radius: 18px; background: color-mix(in srgb, var(--accent-soft) 40%, var(--surface)); overflow-wrap: anywhere; }
@@ -329,29 +331,10 @@ h2 { margin: 0; color: var(--text); font-size: 20px; font-weight: 600; line-heig
 .transcript-history li:last-child { border-bottom: 0; }
 .sentence-time { flex: 0 0 42px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .transcript-history li p { min-width: 0; margin: 0; color: var(--text); font-size: 16px; line-height: 1.8; overflow-wrap: anywhere; }
-.empty-history { display: flex; min-height: 168px; flex-direction: column; align-items: center; justify-content: center; padding: 20px; color: var(--muted); text-align: center; }
-.empty-history > p { margin: 12px 0 4px; color: var(--text); font-size: 14px; }
-.empty-history > span, .retention-note { font-size: 12px; line-height: 1.8; }
-.retention-note { margin: 20px 0 0; color: var(--muted); }
 @media (max-width: 539px) {
-  .speech-recognition { gap: 18px; }
-  .listening-card, .transcript-card { padding: 22px 20px; }
-  .listening-heading { gap: 12px; }
-  .mic-symbol { flex-basis: 44px; height: 44px; border-radius: 15px; }
-  h2 { font-size: 18px; }
-  .listening-controls { align-items: flex-start; flex-direction: column; gap: 12px; }
-  .listening-toggle { align-self: flex-end; }
+  .listening-card, .transcript-card { padding: 20px 16px; }
   .live-transcript { padding: 18px; }
   .transcript-placeholder { flex-direction: column; }
   .transcript-history li { gap: 10px; }
-}
-@media (prefers-reduced-motion: no-preference) {
-  .listening-toggle, .toggle-track, .toggle-track > span { transition: transform var(--motion-fast, 180ms) var(--ease-out, ease), box-shadow var(--motion-fast, 180ms) ease; }
-}
-@media (hover: hover) and (pointer: fine) {
-  .listening-toggle:not(:disabled):hover { background: var(--accent-soft); box-shadow: var(--shadow-soft); }
-}
-@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  .listening-toggle:not(:disabled):hover { transform: translateY(-2px); }
 }
 </style>

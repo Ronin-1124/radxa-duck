@@ -6,8 +6,9 @@ import AppShell from './AppShell.vue'
 const route = useRoute()
 const connection = ref<'unknown' | 'connecting' | 'online' | 'offline'>('unknown')
 
-function updateSpeechConnection(value: unknown): void {
-  if (route.name === 'voice' && (value === 'connecting' || value === 'online' || value === 'offline')) {
+function updateConnection(value: unknown): void {
+  if ((route.name === 'voice' || route.name === 'vision' || route.name === 'device' || route.name === 'settings')
+    && (value === 'unknown' || value === 'connecting' || value === 'online' || value === 'offline')) {
     connection.value = value
   }
 }
@@ -19,8 +20,10 @@ watch(() => route.name, () => { connection.value = 'unknown' }, { flush: 'sync' 
 
 <template>
   <AppShell :connection="connection">
-    <RouterView v-slot="{ Component }">
-      <component :is="Component" @connection="updateSpeechConnection" />
-    </RouterView>
+    <div :key="String(route.name)" class="route-content">
+      <RouterView v-slot="{ Component }">
+        <component :is="Component" @connection="updateConnection" />
+      </RouterView>
+    </div>
   </AppShell>
 </template>
