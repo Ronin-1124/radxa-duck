@@ -4,6 +4,7 @@ import ConnectionOverview from './ConnectionOverview.vue'
 import SpeechRecognition from './SpeechRecognition.vue'
 import VisionPage from './VisionPage.vue'
 import DevicePage from './DevicePage.vue'
+import SettingsPage from './SettingsPage.vue'
 import PendingWorkspace from './PendingWorkspace.vue'
 
 export const router = createRouter({
@@ -14,7 +15,7 @@ export const router = createRouter({
     { path: '/voice', name: 'voice', component: SpeechRecognition },
     { path: '/vision', name: 'vision', component: VisionPage },
     { path: '/device', name: 'device', component: DevicePage },
-    { path: '/settings', name: 'settings', component: PendingWorkspace },
+    { path: '/settings', name: 'settings', component: SettingsPage },
     { path: '/apps', name: 'apps', component: PendingWorkspace },
     { path: '/:pathMatch(.*)*', redirect: { name: 'overview' } },
   ],
