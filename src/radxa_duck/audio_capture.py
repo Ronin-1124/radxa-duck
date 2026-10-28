@@ -225,7 +225,7 @@ def _mute(cancelled: threading.Event | None = None) -> None:
 
 
 @contextmanager
-def _audio_guard(cancelled: threading.Event | None) -> Iterator[None]:
+def _audio_guard(cancelled: threading.Event | None, *, mute_output: bool = True) -> Iterator[None]:
     flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
     with os.fdopen(os.open(LOCK_PATH, flags, 0o600), "r+b") as lock:
         info = os.fstat(lock.fileno())
@@ -240,14 +240,16 @@ def _audio_guard(cancelled: threading.Event | None) -> Iterator[None]:
         _run(["systemctl", "is-active", "--quiet", "pollen-hat-audio-init.service"], 2, cancelled)
         failure = None
         try:
-            _mute(cancelled)
+            if mute_output:
+                _mute(cancelled)
             yield
         except BaseException as exc:
             failure = exc
             raise
         finally:
             try:
-                _mute()  # Cleanup deliberately ignores the cancelled event.
+                if mute_output:
+                    _mute()  # Cleanup deliberately ignores the cancelled event.
             except Exception as exc:
                 if failure is None:
                     raise

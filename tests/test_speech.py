@@ -299,6 +299,26 @@ class SpeechServiceTests(unittest.TestCase):
         self.assertFalse(state["owned"])
         service.stop("owner")
 
+    def test_maintenance_waits_for_cleanup_and_requires_explicit_new_start(self):
+        session = self.harness.session()
+        session.cleanup.release.clear()
+        service = self.service()
+        service.start("owner")
+        self.wait(service, lambda state: state["state"] == "listening")
+        self.assert_code("shutdown_timeout", lambda: service.suspend(timeout=0.01))
+        self.assertTrue(session.cleanup.entered.wait(WAIT))
+        self.assertFalse(service.snapshot()["ready"])
+        self.assert_code("maintenance", lambda: service.start("other"))
+        session.cleanup.release.set()
+        service.suspend(timeout=WAIT)
+        self.assertTrue(session.capture_released.is_set())
+        self.assertTrue(session.decoder_released.is_set())
+        service.resume()
+        self.assertEqual(service.snapshot()["state"], "idle")
+        self.assertTrue(service.snapshot()["ready"])
+        self.assertFalse(service.snapshot("owner")["owned"])
+        self.assertEqual(self.harness.capture_calls, 1)
+
     def test_capture_error_releases_resources_and_allows_restart(self):
         first = self.harness.session(fail_capture=CaptureError("Microphone failed", code="device_unavailable"))
         second = self.harness.session()

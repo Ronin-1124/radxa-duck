@@ -1,4 +1,4 @@
-"""Local speech control and live transcripts over a same-origin WebSocket."""
+"""Local speech and camera control over same-origin WebSockets."""
 
 from __future__ import annotations
 
@@ -20,10 +20,18 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .speech import SpeechError, SpeechService
+from .management import ManagementServices, create_management_routes
+from .vision import MODELS
+from .vision_routes import create_vision_routes
+from .vision_service import VisionService, VisionServiceError
 
 
 def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
-               web_root: Path | None = None, service_factory=SpeechService) -> Starlette:
+               web_root: Path | None = None, service_factory=SpeechService,
+               vision_models: dict[str, Path] | None = None, camera_device: str = "/dev/video0",
+               camera_rotation: int = 0, vision_service_factory=VisionService,
+               management_state_dir: Path | None = None,
+               management_factory=ManagementServices) -> Starlette:
     allowed_origins = set()
     hosts = {"127.0.0.1", "localhost", "testserver"}
     for origin in origins:
@@ -41,10 +49,52 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
     async def lifespan(app):
         service = service_factory(model_dir, vad_model)
         app.state.speech = service
+        vision = None
+        management = None
+        app.state.management = None
         try:
+            vision = vision_service_factory(vision_models, device=camera_device, rotation=camera_rotation)
+            app.state.vision = vision
+            if management_state_dir is not None:
+                initialization = asyncio.create_task(asyncio.to_thread(
+                    management_factory, management_state_dir, service, vision))
+                cancelled = None
+                while not initialization.done():
+                    try:
+                        await asyncio.shield(initialization)
+                    except asyncio.CancelledError as exc:
+                        # Cancelling the await cannot stop its constructor
+                        # thread. Retain the result so finally closes any task
+                        # workers and file locks it acquired during startup.
+                        if cancelled is None:
+                            cancelled = exc
+                management = initialization.result()
+                app.state.management = management
+                if cancelled is not None:
+                    raise cancelled
             yield
         finally:
-            await asyncio.to_thread(service.close)
+            # Signal both workers promptly and finish both cleanups even when
+            # one fails. Neither camera nor microphone waits for the other.
+            services = [service] if vision is None else [service, vision]
+            if management is not None:
+                services.append(management)
+            cleanup = asyncio.gather(*(asyncio.to_thread(item.close) for item in services),
+                                     return_exceptions=True)
+            cancelled = None
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError as exc:
+                    # A cancelled lifespan must still signal and await both
+                    # hardware workers; their close methods have own deadlines.
+                    cancelled = exc
+            results = cleanup.result()
+            failures = [result for result in results if isinstance(result, Exception)]
+            if failures:
+                raise ExceptionGroup("Device service shutdown failed", failures)
+            if cancelled is not None:
+                raise cancelled
 
     async def health(request):
         state = request.app.state.speech.snapshot()
@@ -131,6 +181,8 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
             connections.discard(owner)
 
     routes = [Route("/api/health", health), WebSocketRoute("/api/speech/live", live)]
+    routes.extend(create_vision_routes(allowed_origins))
+    routes.extend(create_management_routes(allowed_origins))
     if web_root is not None:
         index = Path(web_root) / "index.html"
         if not index.is_file():
@@ -153,11 +205,28 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--origin", action="append", help="allowed browser origin, repeatable")
     parser.add_argument("--web-root", type=Path, help="built web assets to serve from the same process")
+    parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/radxa-duck",
+                        help="private persistent board configuration and task state")
+    parser.add_argument("--vision-model", action="append", default=[], metavar="NAME=PATH",
+                        help=f"configured RKNN model ({', '.join(MODELS)}), repeatable; omitted means preview only")
+    parser.add_argument("--camera-device", default="/dev/video0")
+    parser.add_argument("--camera-rotation", type=int, choices=(0, 90, 180, 270), default=0)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
+    vision_models = {}
+    for configured in args.vision_model:
+        name, separator, path = configured.partition("=")
+        if not separator or name not in MODELS or not path or name in vision_models:
+            parser.error(f"--vision-model requires a unique NAME=PATH; names: {', '.join(MODELS)}")
+        vision_models[name] = Path(path)
     origins = tuple(args.origin or (f"http://127.0.0.1:{args.port}", f"http://localhost:{args.port}"))
-    app = create_app(args.model_dir, args.vad_model, origins=origins, web_root=args.web_root)
+    try:
+        app = create_app(args.model_dir, args.vad_model, origins=origins, web_root=args.web_root,
+                         vision_models=vision_models, camera_device=args.camera_device,
+                         camera_rotation=args.camera_rotation, management_state_dir=args.state_dir)
+    except (ValueError, VisionServiceError) as exc:
+        parser.error(str(exc))
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, workers=1, proxy_headers=False,
                 ws="websockets-sansio", ws_max_size=2048, ws_max_queue=4,

@@ -34,6 +34,7 @@ class SpeechService:
         self._state = "loading"
         self._ready = False
         self._closing = False
+        self._suspended = False
         self._owner: str | None = None
         self._session_id: str | None = None
         self._cancelled: threading.Event | None = None
@@ -63,7 +64,8 @@ class SpeechService:
             self._expire_text()
             return {
                 "type": "state", "schema_version": 1, "revision": self._revision,
-                "state": self._state, "ready": self._ready,
+                "state": self._state, "ready": self._ready and not self._suspended,
+                "maintenance": self._suspended,
                 "session_id": self._session_id,
                 "owned": owner is not None and self._owner == owner,
                 "partial_text": self._partial,
@@ -79,6 +81,8 @@ class SpeechService:
         with self._condition:
             if self._closing:
                 raise SpeechError("closed", "Speech service is closing")
+            if self._suspended:
+                raise SpeechError("maintenance", "Device maintenance is in progress")
             if not self._ready:
                 raise SpeechError("not_ready", "Speech models are not ready")
             if self._owner is not None:
@@ -114,6 +118,23 @@ class SpeechService:
                     and not self._cancelled.is_set()):
                 self._state = "listening"
                 self._changed()
+
+    def suspend(self, timeout: float = 15) -> None:
+        """Block new capture and wait until the current hardware is released."""
+        with self._condition:
+            self._suspended = True
+            if self._cancelled is not None:
+                self._cancelled.set()
+                self._partial = ""
+                self._state = "stopping"
+            self._changed()
+            if not self._condition.wait_for(lambda: self._owner is None, timeout=timeout):
+                raise SpeechError("shutdown_timeout", "Microphone did not finish stopping")
+
+    def resume(self) -> None:
+        with self._condition:
+            self._suspended = False
+            self._changed()
 
     def _listen(self, asr: ZipformerAsr, vad: SileroVad,
                 session_id: str, cancelled: threading.Event) -> None:
