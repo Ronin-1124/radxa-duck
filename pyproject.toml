@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "radxa-duck"
 version = "0.1.0"
-description = "Voice and application services for the Radxa Duck robot"
+description = "Voice, vision and application services for the Radxa Duck robot"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.24,<3",
@@ -17,9 +17,11 @@ dependencies = [
 
 [project.scripts]
 radxa-duck = "radxa_duck.server:main"
+radxa-duck-vision = "radxa_duck.vision:main"
 
 [project.optional-dependencies]
 test = ["httpx==0.28.1"]
+vision = ["numpy>=1.24,<2", "opencv-python-headless==4.10.0.84"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
