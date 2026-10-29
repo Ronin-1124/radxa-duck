@@ -1,0 +1,14 @@
+Microduck procedural vocalisations
+Source: https://github.com/pollen-robotics/microduck
+Revision: 6cdfdaad21bed25e01b450c0dd4e0aee0ae19fde
+Upstream license: Apache-2.0 (included as LICENSE).
+
+These WAV assets use the unmodified official Rust sounds recipes in
+sounds/src/{personality,rng,synth,voices}.rs, bank version 5, seed 100,
+variant 0. The upstream sounds crate credits apirrone/microduck_sounds
+as the original Python implementation.
+
+Radxa Duck renders the six one-shot voices offline, converts using the
+upstream synth::to_i16 function, and duplicates the mono samples into both
+48 kHz PCM16 channels for Pollen HAT playback. No pitch, amplitude or timing
+adjustments are applied. File hashes and durations are in manifest.json.

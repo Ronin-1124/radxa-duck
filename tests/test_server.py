@@ -90,6 +90,16 @@ class FakeVision:
 
 
 class ServerTests(unittest.TestCase):
+    def test_brain_context_is_read_only_and_contains_no_private_session_buffers(self):
+        with TestClient(self.make_app()) as client:
+            response = client.get('/api/brain/context')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()['type'], 'brain_context')
+            self.assertEqual(response.headers['cache-control'], 'no-store')
+            self.assertEqual(client.post('/api/brain/context', json={}).status_code, 405)
+            self.assertNotIn('api_key', response.text)
+            self.assertNotIn('history', response.text)
+
     def make_app(self, **kwargs):
         self.service = FakeSpeech()
         self.vision = FakeVision()
@@ -156,6 +166,15 @@ class ServerTests(unittest.TestCase):
                 self.assertIsNone(self.vision.owner)
         self.assertTrue(cloud.closed)
         self.assertEqual(app.state.apps.snapshot()["reply"], "")
+
+    def test_rapid_disconnects_release_microphone_and_connection_admission(self):
+        with TestClient(self.make_app()) as client:
+            for _ in range(20):
+                with self.connect(client) as socket:
+                    socket.receive_json()
+                    socket.send_json({"type": "start"})
+                    self.receive(socket, lambda value: value.get("owned") is True)
+                self.assertIsNone(self.service.owner)
 
     def test_vision_and_speech_routes_can_run_and_stop_independently(self):
         with TestClient(self.make_app()) as client, self.connect(client) as speech:

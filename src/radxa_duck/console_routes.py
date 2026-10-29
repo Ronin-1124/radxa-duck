@@ -6,6 +6,8 @@ import asyncio
 import time
 import uuid
 
+from anyio import CancelScope
+
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
@@ -58,6 +60,9 @@ def create_console_routes(allowed_origins):
     async def status(request):
         return response(await asyncio.to_thread(request.app.state.brain.snapshot))
 
+    async def context(request):
+        return response(await asyncio.to_thread(request.app.state.turn_context.snapshot))
+
     async def control(request):
         value = await body(request, 4096)
         # Cancelling the HTTP wait does not cancel an admitted operation.
@@ -106,16 +111,18 @@ def create_console_routes(allowed_origins):
         except (WebSocketDisconnect, asyncio.TimeoutError, OSError):
             pass
         finally:
-            connections.discard(observer_id)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            try:
-                await asyncio.wait_for(socket.close(), 1)
-            except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
-                pass
+            with CancelScope(shield=True):
+                connections.discard(observer_id)
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(socket.close(), 1)
+                except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
+                    pass
 
     return [Route("/api/brain/status", guarded(status)),
+            Route("/api/brain/context", guarded(context)),
             Route("/api/brain/control", guarded(control), methods=["POST"]),
             WebSocketRoute("/api/brain/events", events),
             Route("/api/identity", guarded(identity), methods=["GET", "PUT"])]

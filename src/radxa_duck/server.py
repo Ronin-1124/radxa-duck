@@ -11,6 +11,8 @@ import time
 from urllib.parse import urlsplit
 import uuid
 
+from anyio import CancelScope
+
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -25,6 +27,7 @@ from .app_service import AppService
 from .brain import BrainService, TurnContext
 from .cloud_client import CloudClient
 from .speech_output import SpeechOutput
+from .duck_output import DuckOutput
 from .management import ManagementServices, create_management_routes
 from .identity import IdentityStore
 from .console_routes import create_console_routes
@@ -41,7 +44,8 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
                management_state_dir: Path | None = None,
                management_factory=ManagementServices, tts_model_dir: Path | None = None,
                tts_volume: int = 45, tts_speaker_id: int = 0, apps_factory=AppService,
-               brain_camera_enabled: bool = False) -> Starlette:
+               duck_sound_dir: Path | None = None, duck_volume: int = 100,
+               brain_camera_enabled: bool = False, brain_microphone_enabled: bool = False) -> Starlette:
     allowed_origins = set()
     hosts = {"127.0.0.1", "localhost", "testserver"}
     for origin in origins:
@@ -88,21 +92,23 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
             identity = IdentityStore(management_state_dir)
             app.state.identity = identity
             context = TurnContext(identity)
+            app.state.turn_context = context
             observer = VisionObserver(vision)
             app.state.vision_observer = observer
             cloud_store = getattr(management, "cloud", None)
             apps = apps_factory(service, vision,
                                 cloud=CloudClient(cloud_store) if cloud_store is not None else None,
                                 cloud_config=cloud_store,
-                                output=SpeechOutput(tts_model_dir, volume_percent=tts_volume,
-                                                    speaker_id=tts_speaker_id), context_provider=context.for_turn)
+                                output=(DuckOutput(duck_sound_dir, volume_percent=duck_volume) if duck_sound_dir is not None else
+                                        SpeechOutput(tts_model_dir, volume_percent=tts_volume, speaker_id=tts_speaker_id)),
+                                context_provider=context.for_turn, vision_observer=observer, visual_policy=context.allows_image)
             app.state.apps = apps
             attach = getattr(management, "attach_application", None)
             if callable(attach):
                 attach(apps)
             brain = BrainService(apps, service, observer, identity, cloud_config=cloud_store,
                                  device=getattr(management, "device", None), context=context,
-                                 camera_enabled=brain_camera_enabled)
+                                 camera_enabled=brain_camera_enabled, microphone_enabled=brain_microphone_enabled)
             app.state.brain = brain
             attach_runtime = getattr(management, "attach_runtime", None)
             if callable(attach_runtime):
@@ -221,14 +227,15 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
         except (WebSocketDisconnect, asyncio.TimeoutError, OSError):
             pass
         finally:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            try:
-                service.stop(owner)
-            except SpeechError:
-                pass
-            connections.discard(owner)
+            with CancelScope(shield=True):
+                try:
+                    service.stop(owner)
+                except SpeechError:
+                    pass
+                connections.discard(owner)
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     routes = [Route("/api/health", health), WebSocketRoute("/api/speech/live", live)]
     routes.extend(create_vision_routes(allowed_origins))
@@ -263,12 +270,16 @@ def main() -> None:
     parser.add_argument("--tts-model-dir", type=Path, help="optional CPU speech synthesis model directory")
     parser.add_argument("--tts-volume", type=int, default=45, choices=range(0, 101), metavar="0..100")
     parser.add_argument("--tts-speaker-id", type=int, default=0)
+    parser.add_argument("--duck-sound-dir", type=Path, help="verified Microduck procedural sound bank")
+    parser.add_argument("--duck-volume", type=int, default=100, choices=range(0, 101), metavar="0..100")
     parser.add_argument("--vision-model", action="append", default=[], metavar="NAME=PATH",
                         help=f"configured RKNN model ({', '.join(MODELS)}), repeatable; omitted means preview only")
     parser.add_argument("--camera-device", default="/dev/video0")
     parser.add_argument("--camera-rotation", type=int, choices=(0, 90, 180, 270), default=0)
-    parser.add_argument("--brain-camera", action="store_true",
-                        help="explicitly enable resident camera/NPU perception; otherwise camera stays demand-driven")
+    parser.add_argument("--brain-camera", action=argparse.BooleanOptionalAction, default=True,
+                        help="resident camera/NPU perception, enabled by default")
+    parser.add_argument("--microphone", action=argparse.BooleanOptionalAction, default=True,
+                        help="resident CPU speech input, enabled by default")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
@@ -284,7 +295,9 @@ def main() -> None:
                          vision_models=vision_models, camera_device=args.camera_device,
                          camera_rotation=args.camera_rotation, management_state_dir=args.state_dir,
                          tts_model_dir=args.tts_model_dir, tts_volume=args.tts_volume,
-                         tts_speaker_id=args.tts_speaker_id, brain_camera_enabled=args.brain_camera)
+                         tts_speaker_id=args.tts_speaker_id, brain_camera_enabled=args.brain_camera,
+                         duck_sound_dir=args.duck_sound_dir, duck_volume=args.duck_volume,
+                         brain_microphone_enabled=args.microphone)
     except (ValueError, VisionServiceError) as exc:
         parser.error(str(exc))
     import uvicorn

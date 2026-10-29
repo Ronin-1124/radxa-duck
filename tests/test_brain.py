@@ -83,6 +83,17 @@ class BrainTests(unittest.TestCase):
         self.assertEqual(self.brain.snapshot()['revision'], revision)
         self.assertEqual((self.mic.starts, self.camera.starts), ([], []))
 
+    def test_configured_resident_microphone_starts_without_any_web_client(self):
+        self.brain.close()
+        self.brain = BrainService(self.apps, self.mic, self.observer, self.identity,
+                                  cloud_config=self.store, context=self.context, microphone_enabled=True)
+        self.wait(lambda s: s['microphone']['enabled'] and s['microphone']['active'])
+        self.assertEqual(len(self.mic.starts), 1)
+        self.command('disable_microphone')
+        self.wait(lambda s: not s['microphone']['active'])
+        self.brain._tick()
+        self.assertEqual(len(self.mic.starts), 1)
+
     def test_control_is_idempotent_before_version_check_and_rejects_reused_id(self):
         value, result = self.command('pause')
         self.command('resume')
@@ -203,6 +214,36 @@ class BrainTests(unittest.TestCase):
         self.command('pause')
         self.wait(lambda s: not s['camera']['active'])
         self.assertTrue(self.brain.snapshot()['camera']['enabled'])
+
+    def test_camera_controls_release_only_brain_lease_and_allow_explicit_retry(self):
+        from test_vision_routes import FakeVision
+        self.brain.close()
+        self.observer.close()
+        self.camera = FakeVision()
+        self.observer = VisionObserver(self.camera)
+        self.brain = BrainService(self.apps, self.mic, self.observer, self.identity,
+                                  cloud_config=self.store, context=self.context)
+        self.command('enable_camera')
+        self.wait(lambda s: s['camera']['active'])
+        self.observer.acquire('preview')
+        request, result = self.command('disable_camera')
+        self.assertTrue(result['status']['camera']['active'])
+        self.assertFalse(result['status']['camera']['enabled'])
+        self.assertEqual(self.brain.control(request), result)
+        self.observer.release('preview')
+        self.wait(lambda s: not s['camera']['active'])
+        self.command('pause')
+        self.command('enable_camera')
+        self.assertFalse(self.brain.snapshot()['camera']['active'])
+        self.command('resume')
+        self.wait(lambda s: s['camera']['active'])
+
+    def test_voice_feedback_reports_explicitly_disabled_input_without_capture(self):
+        status = self.wait(lambda s: s['state'] == 'running')
+        self.assertEqual(status['voice']['input']['pause_reason'], 'disabled')
+        self.assertTrue(status['voice']['reply_available'])
+        self.assertEqual(status['voice']['synthesis']['state'], 'idle')
+        self.assertEqual(self.mic.starts, [])
 
     def test_cloud_failure_requires_explicit_resume_and_new_config_resets_health(self):
         self.cloud.release.clear()

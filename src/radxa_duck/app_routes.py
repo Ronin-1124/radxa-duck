@@ -14,6 +14,8 @@ import threading
 import time
 import uuid
 
+from anyio import CancelScope
+
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -231,31 +233,31 @@ def create_app_routes(allowed_origins: set[str]) -> list:
             except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
                 pass
         finally:
-            # Signal native/network work before cancellation can interrupt any
-            # await below. A rejected observer cannot stop a different owner.
-            connection_closing.set()
-            try:
-                service.stop(owner)
-            except Exception:
-                pass
-            connections.discard(owner)
-            for task in tasks:
-                task.cancel()
-            try:
-                if starting is not None:
-                    await asyncio.shield(starting)
-            except Exception:
-                pass
-            finally:
+            with CancelScope(shield=True):
+                # Signal hardware before awaiting transport or startup cleanup.
+                connection_closing.set()
                 try:
                     service.stop(owner)
                 except Exception:
                     pass
-            await asyncio.gather(*tasks, return_exceptions=True)
-            try:
-                await asyncio.wait_for(socket.close(), timeout=1)
-            except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
-                pass
+                connections.discard(owner)
+                for task in tasks:
+                    task.cancel()
+                try:
+                    if starting is not None:
+                        await asyncio.shield(starting)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        service.stop(owner)
+                    except Exception:
+                        pass
+                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(socket.close(), timeout=1)
+                except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
+                    pass
 
     return [Route("/api/apps/status", status), Route("/api/apps/actions", actions),
             WebSocketRoute("/api/apps/live", live)]

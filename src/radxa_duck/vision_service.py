@@ -208,7 +208,9 @@ class VisionService:
             if (self._state != "streaming" or self._latest is None
                     or time.monotonic() - self._captured_at > MAX_FRAME_AGE):
                 return None
-            return PreviewFrame(self._latest.header, self._latest.jpeg)
+            header = self._latest.header
+            header["frame_age_ms"] = (time.monotonic() - self._captured_at) * 1000
+            return PreviewFrame(header, self._latest.jpeg)
 
     def suspend(self, timeout: float = 15) -> None:
         """Block new preview and wait for camera/NPU cleanup before maintenance."""

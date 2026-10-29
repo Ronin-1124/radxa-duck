@@ -130,7 +130,8 @@ class AppServiceTests(unittest.TestCase):
     def setUp(self):
         self.mic, self.camera = Capture(), Capture(camera=True)
         self.cloud = Cloud()
-        self.store = SimpleNamespace(snapshot=lambda: {'configured': True})
+        self.store = SimpleNamespace(snapshot=lambda: {'configured': True, 'base_url': 'https://api.deepseek.com/v1',
+                                                       'model': 'deepseek-flash', 'revision': 1})
         self.output = Output(self.mic)
         self.service = AppService(self.mic, self.camera, cloud=self.cloud,
                                   cloud_config=self.store, output=self.output)
@@ -167,9 +168,26 @@ class AppServiceTests(unittest.TestCase):
         self.assertEqual(self.service.snapshot('owner')['state'], 'waiting')
         self.assertEqual(self.mic.starts, [])
         self.assertEqual(self.camera.starts, [])
+
         self.assertEqual(self.cloud.calls, [])
         self.assertEqual(self.output.calls, [])
         self.assert_code('invalid_request', lambda: self.service.set_listening('owner', True))
+
+    def test_synthesis_and_playback_feedback_distinguish_failure_stages(self):
+        from radxa_duck.speech_output import SpeechOutputError
+        def fail(text, *, cancelled, on_phase):
+            on_phase('synthesizing')
+            on_phase('playing')
+            raise SpeechOutputError('playback_failed')
+        self.output.speak = fail
+        self.service.start('owner', scene='voice-chat', speak=True)
+        self.service.submit('owner', request_id='voice-feedback', text='hello')
+        self.wait(lambda s: s['error'] is not None)
+        voice = self.service.voice_feedback()
+        self.assertEqual(voice['synthesis']['state'], 'succeeded')
+        self.assertEqual(voice['playback']['state'], 'failed')
+        self.assertEqual(voice['playback']['error_code'], 'playback_failed')
+        self.assertEqual(voice['playback']['task_id'], self.service.snapshot('owner')['turn_id'])
 
     def test_typed_chat_streams_and_uses_only_bounded_text_history(self):
         self.service.start('owner', scene='voice-chat')

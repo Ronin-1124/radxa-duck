@@ -15,10 +15,11 @@ import time
 import uuid
 
 from .app_service import AppServiceError
+from .vision_service import VisionServiceError
 
 
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
-ACTIONS = frozenset(("pause", "resume", "enable_microphone", "disable_microphone", "cancel_task"))
+ACTIONS = frozenset(("pause", "resume", "enable_microphone", "disable_microphone", "enable_camera", "disable_camera", "cancel_task"))
 MAX_REVISION = 2 ** 53 - 1
 
 
@@ -35,10 +36,24 @@ class TurnContext:
         self._identity = identity
         self._lock = threading.Lock()
         self._facts = {}
+        self._camera_allowed = False
 
     def update(self, facts):
         with self._lock:
             self._facts = deepcopy(facts)
+
+    def snapshot(self):
+        with self._lock:
+            return {"schema_version": 1, "type": "brain_context", "identity": self._identity.for_turn(),
+                    "facts": deepcopy(self._facts)}
+
+    def allows_image(self):
+        with self._lock:
+            return self._camera_allowed
+
+    def set_camera_policy(self, enabled):
+        with self._lock:
+            self._camera_allowed = enabled is True
 
     def for_turn(self):
         profile = self._identity.for_turn()
@@ -46,13 +61,14 @@ class TurnContext:
             facts = deepcopy(self._facts)
         return ("以下 JSON 是本轮统一的角色身份。按此身份表达，遵守真实设备能力与执行约束。\n"
                 + json.dumps(profile, ensure_ascii=False, allow_nan=False)
-                + "\n以下 JSON 是板端采样的设备事实；缺失信息表示未知，不得推测动作已完成。\n"
+                + "\n以下 JSON 是板端采样的设备事实和可调用能力；缺失信息表示未知，不得推测动作已完成。"
+                  "检测摘要只包含有限类别，不能当作完整画面理解。设备管理接口不属于你的可执行能力。\n"
                 + json.dumps(facts, ensure_ascii=False, allow_nan=False))
 
 
 class BrainService:
     def __init__(self, apps, speech, vision_observer, identity, *, cloud_config=None,
-                 device=None, context=None, camera_enabled=False):
+                 device=None, context=None, camera_enabled=False, microphone_enabled=False):
         self._apps, self._speech, self._vision = apps, speech, vision_observer
         self._identity, self._cloud_config, self._device, self._context = identity, cloud_config, device, context
         self._lock = threading.RLock()
@@ -60,6 +76,7 @@ class BrainService:
         self._instance_id = "brain-" + uuid.uuid4().hex
         self._owner = self._instance_id
         self._paused = self._microphone_enabled = self._closing = self._suspended = self._fault = False
+        self._microphone_enabled = microphone_enabled
         self._camera_enabled = camera_enabled
         self._initialized = False
         self._camera_lease = False
@@ -72,6 +89,8 @@ class BrainService:
         self._last = None
         self._requests = {}
         self._cloud = {"configured": False, "model": None, "health": "unknown"}
+        self._unknown_check = {"state": "unknown", "revision": None, "checked_at": None, "error_code": None}
+        self._cloud.update(revision=None, connection_check=deepcopy(self._unknown_check), answer=deepcopy(self._unknown_check))
         self._cloud_revision = self._health_revision = None
         self._facts = {}
         self._thread = threading.Thread(target=self._run, name="radxa-brain", daemon=True)
@@ -92,6 +111,13 @@ class BrainService:
             elif event["type"] == "answer_done":
                 self._health_revision = event.get("revision")
                 self._cloud["health"] = "ready" if self._health_revision == self._cloud_revision else "unknown"
+            elif (event["type"] == "interaction_decision" and self._task is not None
+                  and self._task["id"] == event["turn_id"]):
+                self._task["response"] = {"kind": "duck", "sound": event["sound"],
+                                          "image_used": event["image_used"], "played": False}
+            elif (event["type"] == "playback_done" and self._task is not None
+                  and self._task["id"] == event["turn_id"] and "response" in self._task):
+                self._task["response"]["played"] = event["played"]
             elif event["type"] == "turn_end" and self._task is not None and self._task["id"] == event["turn_id"]:
                 self._task["state"] = event["state"]
                 self._task_finished_at = time.monotonic()
@@ -110,6 +136,12 @@ class BrainService:
     def _snapshot(self):
         engine = self._apps.snapshot(self._owner)
         self._collect_events(engine)
+        answer = self._apps.cloud_feedback()
+        if answer is not None:
+            self._cloud["answer"] = answer
+            self._cloud["health"] = ("ready" if answer["state"] == "succeeded" else
+                                     "error" if answer["state"] == "failed" else "unknown") if (
+                                         answer["revision"] == self._cloud_revision) else "unknown"
         microphone = self._speech.snapshot()
         camera = self._vision.snapshot(self._owner)
         actions = self._apps.actions_snapshot()
@@ -127,6 +159,13 @@ class BrainService:
         elif state == "running" and self._microphone_enabled and owned and mic_active:
             activity = "listening"
         usable = self._initialized and not self._closing and not self._suspended
+        voice = self._apps.voice_feedback()
+        reason = (None if mic_active else "maintenance" if self._suspended else
+                  "disabled" if not self._microphone_enabled else "error" if self._fault else
+                  "interaction_paused" if self._paused else "synthesis" if engine["state"] == "synthesizing" else
+                  "playback" if engine["state"] == "playing" else "answer_generation" if task_active else "starting")
+        voice["input"] = {"state": microphone.get("state", "unknown"), "pause_reason": reason,
+                          "error_code": (microphone.get("error") or {}).get("code")}
         capture_busy = microphone.get("state") in ("starting", "listening", "stopping") and not owned
         releasing = owned and engine["state"] == "stopping" and not task_active
         controls = {"pause": usable and not self._paused and not self._fault,
@@ -135,6 +174,9 @@ class BrainService:
                     "enable_microphone": usable and not self._microphone_enabled and mic_available
                                          and not busy and not capture_busy and not releasing,
                     "disable_microphone": usable and self._microphone_enabled,
+                    "enable_camera": usable and not self._camera_enabled and camera["available"]
+                                     and (self._paused or self._fault or camera["can_start_preview"]),
+                    "disable_camera": usable and self._camera_enabled,
                     "cancel_task": usable and task_active and self._task["state"] == "running" and owned}
         value = {"schema_version": 1, "type": "brain_status", "instance_id": self._instance_id,
                  "state": state, "activity": activity, "events_available": True,
@@ -143,6 +185,7 @@ class BrainService:
                  "camera": {"available": camera["available"] and not self._camera_failed, "enabled": self._camera_enabled,
                             "active": camera["camera_active"]},
                  "cloud": deepcopy(self._cloud),
+                 "voice": voice,
                  "motion": {"available": actions["available"], "state": "ready" if actions["available"] else "unavailable"},
                  "task": deepcopy(self._task), "controls": controls}
         if value != self._last:
@@ -210,6 +253,14 @@ class BrainService:
                     if self._apps.snapshot(self._owner).get("owned"):
                         self._apps.set_listening(self._owner, False)
                     self._microphone_enabled = False
+                elif action == "enable_camera":
+                    if not self._paused and not self._fault:
+                        self._vision.acquire(self._owner, detection=True)
+                        self._camera_lease = True
+                    self._camera_enabled, self._camera_failed = True, False
+                elif action == "disable_camera":
+                    self._vision.release(self._owner)
+                    self._camera_lease = self._camera_enabled = self._camera_failed = False
                 else:
                     if self._task is None or self._task["id"] != value["task_id"]:
                         raise BrainError("conflict")
@@ -217,6 +268,10 @@ class BrainService:
                     self._task["state"] = "cancelling"
             except AppServiceError as exc:
                 raise BrainError("conflict" if exc.code in ("not_owner", "busy", "conflict") else "unavailable") from None
+            except VisionServiceError as exc:
+                raise BrainError("conflict" if exc.code == "busy" else "unavailable") from None
+            if self._context is not None:
+                self._context.set_camera_policy(self._camera_enabled and not self._camera_failed and not self._fault)
             result = {"schema_version": 1, "request_id": request_id, "status": self._snapshot()}
             self._requests[request_id] = (deepcopy(value), deepcopy(result))
             # Old commands also carry their original revision; even outside
@@ -237,14 +292,18 @@ class BrainService:
         try:
             if self._device is not None:
                 sample = self._device.snapshot()
-                device = {key: sample.get(key) for key in ("model", "app_version", "cpu", "memory", "temperature")}
+                device = {key: sample.get(key) for key in ("model", "hostname", "os", "kernel", "app_version",
+                                                          "uptime_seconds", "cpu", "memory", "storage", "temperature")}
         except Exception:
             pass
         with self._lock:
             if configured.get("revision") != self._cloud_revision:
                 self._cloud["health"] = "unknown"
                 self._cloud_revision = configured.get("revision")
-            self._cloud.update(configured=configured.get("configured") is True, model=configured.get("model"))
+            check = getattr(self._cloud_config, "connection_snapshot", None)
+            self._cloud.update(configured=configured.get("configured") is True, model=configured.get("model"),
+                               revision=configured.get("revision"),
+                               connection_check=check() if callable(check) else deepcopy(self._unknown_check))
             self._facts = device
             self._initialized = True
 
@@ -253,6 +312,11 @@ class BrainService:
             status = self._snapshot()
             engine = self._apps.snapshot(self._owner)
             want_capture = not (self._paused or self._fault or self._suspended or self._closing)
+            if (want_capture and self._microphone_enabled and not engine.get("session_id")
+                    and self._speech.snapshot().get("ready") is True):
+                self._ensure_session()
+                self._apps.set_listening(self._owner, True)
+                engine = self._apps.snapshot(self._owner)
             if self._camera_enabled and want_capture and not self._camera_lease and not self._camera_failed:
                 try:
                     self._vision.acquire(self._owner, detection=True)
@@ -279,18 +343,24 @@ class BrainService:
                     self._apps.forget_context(self._owner)
                 self._task = self._task_finished_at = None
             if self._context is not None:
+                self._context.set_camera_policy(self._camera_enabled and not self._camera_failed
+                                                and not self._suspended and not self._closing and not self._fault)
                 perception = None
                 if self._camera_enabled and self._camera_lease:
                     frame = self._vision.frame()
                     if frame is not None:
                         result = frame.header.get("result") or {}
-                        perception = {"frame_id": frame.header.get("frame_id"),
+                        perception = {"kind": "local_object_detection", "frame_id": frame.header.get("frame_id"),
+                                      "frame_age_ms": frame.header.get("frame_age_ms"),
+                                      "width": frame.header.get("width"), "height": frame.header.get("height"),
                                       "detections": [{key: item.get(key) for key in ("label", "score", "box_xyxy")}
                                                      for item in result.get("detections", [])[:20]]}
                 self._context.update({"sampled_at": status["sampled_at"], "brain_state": status["state"],
                                       "microphone": status["microphone"], "camera": status["camera"],
                                       "cloud": status["cloud"], "motion": status["motion"], "device": self._facts,
-                                      "visual_observation": perception})
+                                      "voice": status["voice"], "task": status["task"],
+                                      "visual_observation": perception,
+                                      "capabilities": self._apps.interaction_capabilities()})
 
     def _run(self):
         sampled_at = 0.0
@@ -312,6 +382,8 @@ class BrainService:
     def suspend(self, timeout=15):
         with self._lock:
             self._suspended = self._paused = True
+            if self._context is not None:
+                self._context.set_camera_policy(False)
             self._microphone_enabled = False
             if self._apps.snapshot(self._owner).get("owned"):
                 self._apps.stop(self._owner)

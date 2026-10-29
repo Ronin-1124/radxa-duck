@@ -59,6 +59,7 @@ class CloudConfigStore:
     def __init__(self, state_dir: Path, *, allow_local_http: bool = False, opener=None):
         self._allow_local_http = allow_local_http
         self._thread_lock = threading.RLock()
+        self._connection_check = {"state": "unknown", "revision": None, "checked_at": None, "error_code": None}
         self._opener = opener if opener is not None else urllib.request.build_opener(
             urllib.request.ProxyHandler({}), _NoRedirect())
         self._directory = Path(state_dir)
@@ -293,6 +294,8 @@ class CloudConfigStore:
             # No lock is held while doing network I/O. Report the tested
             # revision even if a different browser saves a new configuration.
             saved = deepcopy(saved)
+            self._connection_check = {"state": "running", "revision": saved["revision"],
+                                      "checked_at": None, "error_code": None}
         started = time.monotonic()
         code, available = None, None
         headers = {"Accept": "application/json", "User-Agent": "radxa-duck"}
@@ -348,10 +351,20 @@ class CloudConfigStore:
             # Custom transports and native errors must not leak credentials or
             # provider responses through an exception traceback to the caller.
             code = "network_error"
+        checked_at = datetime.now(timezone.utc).isoformat()
+        with self._thread_lock:
+            self._connection_check = {"state": "failed" if code else "succeeded", "revision": saved["revision"],
+                                      "checked_at": checked_at, "error_code": code}
         return {"schema_version": 1, "revision": saved["revision"], "state": "failed" if code else "succeeded",
+                "checked_at": checked_at,
                 "elapsed_ms": (time.monotonic() - started) * 1000,
                 "error": {"code": code, "message": _MESSAGES[code]} if code else None,
                 "model_available": available}
+
+    def connection_snapshot(self):
+        """Last connection check in this process, independent of chat success."""
+        with self._thread_lock:
+            return deepcopy(self._connection_check)
 
     @staticmethod
     def _status_error(status):

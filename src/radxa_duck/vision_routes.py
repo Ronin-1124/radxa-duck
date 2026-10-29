@@ -15,6 +15,8 @@ import json
 import time
 import uuid
 
+from anyio import CancelScope
+
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
@@ -165,21 +167,22 @@ def create_vision_routes(allowed_origins: set[str], *, ack_timeout: float = 3.0)
         except (WebSocketDisconnect, asyncio.TimeoutError, OSError):
             pass
         finally:
-            pending = None
-            # Cancelling capture precedes waiting for network task cleanup.
-            try:
-                service.stop(owner)
-            except VisionServiceError:
-                pass
-            # ASGI cancellation can interrupt any following await. Release the
-            # admission slot synchronously, just like camera cancellation.
-            connections.discard(owner)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            try:
-                await asyncio.wait_for(socket.close(), 1)
-            except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
-                pass
+            with CancelScope(shield=True):
+                pending = None
+                # Cancelling capture precedes waiting for network task cleanup.
+                try:
+                    service.stop(owner)
+                except VisionServiceError:
+                    pass
+                # ASGI cancellation can interrupt any following await. Release the
+                # admission slot synchronously, just like camera cancellation.
+                connections.discard(owner)
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(socket.close(), 1)
+                except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
+                    pass
 
     return [Route("/api/vision/status", status), WebSocketRoute("/api/vision/live", live)]

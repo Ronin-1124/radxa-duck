@@ -11,6 +11,8 @@ import threading
 import time
 import uuid
 
+from anyio import CancelScope
+
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
@@ -272,18 +274,19 @@ def create_observer_routes(allowed_origins, *, ack_timeout=10.0):
         except (WebSocketDisconnect, asyncio.TimeoutError, OSError, VisionServiceError):
             pass
         finally:
-            pending = None
-            try:
-                service.release(subscription_id)
-            except VisionServiceError:
-                pass
-            connections.discard(subscription_id)
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            try:
-                await asyncio.wait_for(socket.close(), 1)
-            except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
-                pass
+            with CancelScope(shield=True):
+                pending = None
+                try:
+                    service.release(subscription_id)
+                except VisionServiceError:
+                    pass
+                connections.discard(subscription_id)
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(socket.close(), 1)
+                except (RuntimeError, WebSocketDisconnect, asyncio.TimeoutError, OSError):
+                    pass
 
     return [Route("/api/vision/observer/status", info), WebSocketRoute("/api/vision/observe", observe)]

@@ -369,7 +369,7 @@ def open_pcm_stream(cancelled: threading.Event,
     """Own the HAT while yielding continuous 16 kHz mono PCM16 blocks in memory.
 
     The first block can be shorter because of filter delay; later blocks are
-    about 100 ms. Consume promptly: ALSA uses a 500 ms buffer, pipes are bounded,
+    about 100 ms. Consume promptly: ALSA uses a 2 s buffer, pipes are bounded,
     and overruns fail rather than silently dropping audio. The callback runs
     once on the consuming thread after the first raw PCM frame and must not block.
     Closing the context or cancellation discards pending samples and filter tail.
@@ -386,7 +386,7 @@ def open_pcm_stream(cancelled: threading.Event,
             command = [
                 "arecord", "-q", "-D", DEVICE, "-t", "raw", "-f", "S16_LE",
                 "-r", str(RAW_RATE), "-c", "2", "--period-time=20000",
-                "--buffer-time=500000", "--fatal-errors",
+                "--buffer-time=2000000", "--fatal-errors",
             ]
             try:
                 process = subprocess.Popen(

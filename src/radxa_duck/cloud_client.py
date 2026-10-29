@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
+from datetime import datetime, timezone
 import json
 import socket
 import ssl
@@ -32,7 +33,7 @@ MAX_REQUEST_BYTES = 1024 * 1024
 MAX_TOKENS = 1024
 MAX_OPEN_TIMEOUT = 5.0
 _SYSTEM = ("你运行在 Radxa Duck 机器人上，角色身份以本轮配置为准，使用自然简洁的语言回答用户。只回答文字，"
-           "不要调用工具，不要声称已经完成任何身体动作或设备操作。")
+           "不要调用未提供的工具。只有板端已确认成功的操作才能描述为已完成，计划或请求不代表执行成功。")
 _MESSAGES = {
     "invalid_request": "Invalid cloud application input",
     "not_configured": "Save cloud configuration before using cloud applications",
@@ -223,9 +224,24 @@ class CloudClient:
         self._lock = threading.Lock()
         self._active = set()
         self._closed = False
+        self._feedback = {"state": "unknown", "revision": None, "checked_at": None, "error_code": None}
+        self._feedback_sequence = 0
+
+    def feedback(self):
+        with self._lock:
+            return deepcopy(self._feedback)
+
+    def reject_answer(self, code, *, revision):
+        """A finished transport can still contain an invalid application answer."""
+        if code not in {"invalid_response", "incomplete_response", "output_limit"}:
+            return
+        with self._lock:
+            if self._feedback["revision"] == revision and self._feedback["state"] == "succeeded":
+                self._feedback.update(state="failed", error_code=code,
+                                      checked_at=datetime.now(timezone.utc).isoformat())
 
     @staticmethod
-    def _request(saved, prompt, image_jpeg, history, system_prompt=None):
+    def _request(saved, prompt, image_jpeg, history, system_prompt=None, json_mode=False):
         _text(prompt, MAX_PROMPT_CHARACTERS)
         if not isinstance(history, (tuple, list)) or len(history) > MAX_HISTORY_MESSAGES:
             raise CloudClientError("invalid_request")
@@ -252,8 +268,10 @@ class CloudClient:
             content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {
                 "url": "data:image/jpeg;base64," + base64.b64encode(image_jpeg).decode("ascii"), "detail": "low"}}]
         messages.append({"role": "user", "content": content})
-        payload = json.dumps({"model": saved["model"], "messages": messages, "stream": True,
-                              "max_tokens": MAX_TOKENS}, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        data = {"model": saved["model"], "messages": messages, "stream": True, "max_tokens": MAX_TOKENS}
+        if json_mode:
+            data["response_format"] = {"type": "json_object"}
+        payload = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if len(payload) > MAX_REQUEST_BYTES:
             raise CloudClientError("invalid_request")
         headers = {"Accept": "text/event-stream", "Content-Type": "application/json", "User-Agent": "radxa-duck"}
@@ -276,7 +294,45 @@ class CloudClient:
 
     def stream(self, prompt: str, *, cancelled: threading.Event, image_jpeg: bytes | None = None,
                history: tuple = (), expected_revision: int | None = None,
-               system_prompt: str | None = None, runtime_config: dict | None = None):
+               system_prompt: str | None = None, runtime_config: dict | None = None, json_mode=False):
+        # Only finite metadata leaves this operation; no text, image or secret.
+        with self._lock:
+            self._feedback_sequence += 1
+            sequence = self._feedback_sequence
+        revision, finished, code, state = expected_revision, False, None, "cancelled"
+        stream = saved = None
+        def report(value, error=None, *, terminal=False):
+            with self._lock:
+                if sequence == self._feedback_sequence:
+                    self._feedback = {"state": value, "revision": revision, "error_code": error,
+                                      "checked_at": datetime.now(timezone.utc).isoformat() if terminal else None}
+        try:
+            saved = self.pin_config(expected_revision=expected_revision) if runtime_config is None else runtime_config
+            revision = saved["revision"]
+            report("running")
+            stream = self._stream(prompt, cancelled=cancelled, image_jpeg=image_jpeg, history=history,
+                                  expected_revision=expected_revision, system_prompt=system_prompt, runtime_config=saved,
+                                  json_mode=json_mode)
+            for event in stream:
+                if event["type"] == "done":
+                    finished = True
+                    report("succeeded", terminal=True)
+                    saved = runtime_config = system_prompt = image_jpeg = None
+                    prompt, history = "", ()
+                yield event
+        except CloudClientError as exc:
+            state, code = ("cancelled" if exc.code == "cancelled" else "failed"), exc.code
+            raise
+        finally:
+            if stream is not None:
+                stream.close()
+            saved = runtime_config = system_prompt = image_jpeg = None
+            if not finished:
+                report(state, code or "cancelled", terminal=True)
+
+    def _stream(self, prompt: str, *, cancelled: threading.Event, image_jpeg: bytes | None = None,
+                history: tuple = (), expected_revision: int | None = None,
+                system_prompt: str | None = None, runtime_config: dict | None = None, json_mode=False):
         if not isinstance(cancelled, threading.Event):
             raise CloudClientError("invalid_request")
         if cancelled.is_set():
@@ -284,7 +340,9 @@ class CloudClient:
         saved = self.pin_config(expected_revision=expected_revision) if runtime_config is None else deepcopy(runtime_config)
         if expected_revision is not None and saved["revision"] != expected_revision:
             raise CloudClientError("conflict")
-        request = self._request(saved, prompt, image_jpeg, history, system_prompt)
+        if type(json_mode) is not bool:
+            raise CloudClientError("invalid_request")
+        request = self._request(saved, prompt, image_jpeg, history, system_prompt, json_mode)
         lifetime = _Lifetime(cancelled, saved["timeout_seconds"], self._clock)
         with self._lock:
             if self._closed:

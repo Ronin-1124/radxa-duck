@@ -103,6 +103,25 @@ class CloudClientTests(unittest.TestCase):
         client = self.client(opener=opener if opener is not None else Opener())
         return list(client.stream("你好", cancelled=self.cancelled, **kwargs))
 
+    def test_json_decisions_use_explicit_json_mode_without_enabling_tools(self):
+        opener = Opener(Response(done('{"reply":"你好","sound":"greet","look":false}')))
+        result = self.collect(opener, json_mode=True)
+        payload = json.loads(opener.calls[0][0].data)
+        self.assertEqual(payload['response_format'], {'type': 'json_object'})
+        self.assertNotIn('tools', payload)
+        self.assertEqual(result[-1]['type'], 'done')
+        self.error('invalid_request', lambda: self.collect(json_mode='true'))
+
+    def test_invalid_application_answer_does_not_remain_verified(self):
+        client = self.client(opener=Opener())
+        list(client.stream('你好', cancelled=self.cancelled))
+        self.assertEqual(client.feedback()['state'], 'succeeded')
+        client.reject_answer('invalid_response', revision=0)
+        self.assertEqual(client.feedback()['state'], 'succeeded')
+        client.reject_answer('invalid_response', revision=1)
+        self.assertEqual(client.feedback()['state'], 'failed')
+        self.assertEqual(client.feedback()['error_code'], 'invalid_response')
+
     def error(self, code, operation):
         with self.assertRaises(CloudClientError) as raised:
             operation()
@@ -182,6 +201,23 @@ class CloudClientTests(unittest.TestCase):
         self.assertEqual(json.loads(opener.calls[0][0].data)["model"], "example-model")
         self.error("conflict", lambda: self.collect(expected_revision=1))
 
+    def test_answer_feedback_has_pinned_revision_time_and_redacted_error(self):
+        client = self.client(opener=Opener())
+        stream = client.stream('hi', cancelled=self.cancelled)
+        next(stream)
+        self.assertEqual(client.feedback()['state'], 'running')
+        self.store.save({'model': 'next-model'}, expected_revision=1)
+        list(stream)
+        result = client.feedback()
+        self.assertEqual((result['state'], result['revision']), ('succeeded', 1))
+        self.assertIsNotNone(result['checked_at'])
+        self.assertNotIn(KEY, repr(result))
+        failing = self.client(opener=Opener(error=OSError('private information')))
+        self.error('network_error', lambda: list(failing.stream('hi', cancelled=self.cancelled)))
+        self.assertEqual(failing.feedback()['error_code'], 'network_error')
+        self.assertEqual(failing.feedback()['revision'], 2)
+        self.assertNotIn('private information', repr(failing.feedback()))
+
     def test_pinned_turn_keeps_identity_and_cloud_config_when_saved_before_transport_starts(self):
         opener = Opener()
         client = self.client(opener=opener)
@@ -195,7 +231,7 @@ class CloudClientTests(unittest.TestCase):
         self.assertEqual(request.get_header('Authorization'), 'Bearer ' + KEY)
         self.assertEqual(result[-1]['revision'], 1)
         self.assertIn(identity, payload['messages'][0]['content'])
-        self.assertIn('不要声称已经完成任何身体动作', payload['messages'][0]['content'])
+        self.assertIn('只有板端已确认成功的操作才能描述为已完成', payload['messages'][0]['content'])
         self.assertNotIn(KEY, repr(result))
         self.assertNotIn(identity, repr(result))
 

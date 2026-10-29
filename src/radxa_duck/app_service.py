@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import deque
 from copy import deepcopy
+from datetime import datetime, timezone
+import json
 import re
 import threading
 import time
@@ -11,6 +13,7 @@ import uuid
 
 from .actions import ActionError, ActionService
 from .cloud_client import CloudClientError
+from .interaction import SOUNDS, decision_prompt, image_support, parse_decision, requests_image
 from .speech import SpeechError
 from .speech_output import SpeechOutputError
 from .vision_service import VisionServiceError
@@ -33,11 +36,12 @@ def _text(value):
 
 class AppService:
     def __init__(self, speech, vision, *, cloud=None, cloud_config=None, output=None, actions=None,
-                 context_provider=None):
+                 context_provider=None, vision_observer=None, visual_policy=None):
         self._speech, self._vision = speech, vision
         self._cloud, self._cloud_config, self._output = cloud, cloud_config, output
         self._actions = actions if actions is not None else ActionService()
         self._context_provider = context_provider
+        self._observer, self._visual_policy = vision_observer, visual_policy
         self._condition = threading.Condition()
         self._owner = self._session_id = self._scene = None
         self._state = "idle"
@@ -54,6 +58,10 @@ class AppService:
         self._asr_session_id = None
         self._hardware_owner = None
         self._continue_on_cancel = False
+        self._synthesis = {"state": "idle", "error_code": None, "task_id": None, "updated_at": None}
+        self._playback = deepcopy(self._synthesis)
+        self._operation_stage = None
+        self._image_answer = {"state": "unknown", "revision": None, "checked_at": None, "error_code": None}
         self._thread = threading.Thread(target=self._run, name="radxa-apps", daemon=True)
         self._thread.start()
 
@@ -86,6 +94,40 @@ class AppService:
     def actions_snapshot(self):
         return self._actions.snapshot()
 
+    def cloud_feedback(self):
+        read = getattr(self._cloud, "feedback", None)
+        return read() if callable(read) else None
+
+    def voice_feedback(self):
+        available = self._output_ready()
+        output = self._output.snapshot() if self._output is not None else {}
+        with self._condition:
+            return {"reply_available": available, "synthesis": deepcopy(self._synthesis),
+                    "playback": deepcopy(self._playback), "kind": output.get("kind", "tts"),
+                    "tts_available": available and output.get("kind") != "duck",
+                    "sounds": output.get("sounds", []), "last_sound": output.get("last_sound")}
+
+    def image_capability(self):
+        config = self._cloud_config.snapshot() if self._cloud_config is not None else {}
+        supported = image_support(config)
+        with self._condition:
+            answer = deepcopy(self._image_answer)
+        return {"available": supported and self._cloud_ready() and self._vision.snapshot().get("ready") is True,
+                "model_supported": supported, "verified": answer["state"] == "succeeded" and answer["revision"] == config.get("revision"),
+                "answer": answer, "revision": config.get("revision"),
+                "requires_capture_confirmation": True, "policy": "explicit_single_frame"}
+
+    def interaction_capabilities(self):
+        output = self._output.snapshot() if self._output is not None else {}
+        return {"duck_sounds": {"available": output.get("kind") == "duck" and output.get("available") is True,
+                                "sounds": {key: SOUNDS[key] for key in output.get("sounds", []) if key in SOUNDS}},
+                "image_understanding": self.image_capability(), "motion": self._actions.snapshot(),
+                "administration": {"available": False, "reason": "management_only"}}
+
+    def _voice_stage(self, target, state, error_code=None):
+        target.update(state=state, error_code=error_code, task_id=self._turn_id,
+                      updated_at=datetime.now(timezone.utc).isoformat())
+
     def capabilities(self):
         cloud = self._cloud_ready()
         speech = self._speech.snapshot().get("ready") is True
@@ -96,18 +138,17 @@ class AppService:
             blocked = self._closing or self._suspended
             scenes = []
             for scene in SCENES:
-                ready = actions if scene == "motion" else cloud and (vision if scene == "image-qa" else True)
+                ready = actions if scene == "motion" else cloud and (self.image_capability()["available"] if scene == "image-qa" else True)
                 available = ready and not blocked
                 reason = (None if available else "maintenance" if blocked else
                           "controller_unavailable" if scene == "motion" else
-                          "cloud_unconfigured" if not cloud else "camera_unavailable")
+                          "cloud_unconfigured" if not cloud else "camera_unavailable" if not vision else "image_model_unsupported")
                 scenes.append({"id": scene, "available": available, "reason": reason})
             return {"schema_version": 1, "type": "apps_status", "state": self._state,
                     "session_active": self._owner is not None, "scenes": scenes,
                     "capabilities": {"session": not blocked, "streaming": cloud,
                                      "voice_input": speech, "voice_reply": output,
-                                     "image_input": {"available": cloud and vision, "verified": False,
-                                                     "requires_capture_confirmation": True},
+                                     "image_input": self.image_capability(),
                                      "actions": actions, "companion": {"mode": "passive", "proactive": False}}}
 
     def snapshot(self, owner=None):
@@ -198,7 +239,9 @@ class AppService:
             preparation_error = getattr(exc, "code", "config_unavailable")
         self._turn_id = uuid.uuid4().hex
         self._request = {"text": text, "capture_image": capture_image, "action_id": action_id,
-                         "context": context, "preparation_error": preparation_error}
+                         "context": context, "preparation_error": preparation_error,
+                         "visual_consent": requests_image(text) and self._visual_policy is not None
+                                           and self._visual_policy() is True}
         self._continue_on_cancel = False
         self._requests[request_id] = self._turn_id
         while len(self._requests) > 32:
@@ -206,6 +249,9 @@ class AppService:
         self._reply, self._transcript, self._error = "", text, None
         self._cancelled = threading.Event()
         self._state = "queued"
+        self._operation_stage = "input"
+        for target in (self._synthesis, self._playback):
+            self._voice_stage(target, "idle")
         self._event("turn_start", request_id=request_id)
 
     def set_listening(self, owner, enabled):
@@ -271,6 +317,14 @@ class AppService:
             if self._stop_requested or self._closing or self._cancelled is not None and self._cancelled.is_set():
                 return
             self._state = phase
+            if phase == "synthesizing":
+                self._operation_stage = "synthesis"
+                self._voice_stage(self._synthesis, "running")
+            elif phase == "playing":
+                self._operation_stage = "playback"
+                duck = self._output is not None and self._output.snapshot().get("kind") == "duck"
+                self._voice_stage(self._synthesis, "skipped" if duck else "succeeded")
+                self._voice_stage(self._playback, "running")
             self._changed()
 
     def _stop_device(self, device):
@@ -298,6 +352,22 @@ class AppService:
 
     def _capture(self, cancelled):
         self._phase("capturing")
+        if self._observer is not None:
+            self._check(cancelled)
+            self._observer.acquire(self._hardware_owner)
+            try:
+                deadline = time.monotonic() + 6
+                while time.monotonic() < deadline:
+                    self._check(cancelled)
+                    frame = self._observer.frame()
+                    if frame is not None:
+                        return bytes(frame.jpeg)
+                    if self._observer.snapshot()["state"] == "error":
+                        break
+                    cancelled.wait(0.03)
+                raise AppServiceError("camera_timeout", "The camera did not provide an image in time")
+            finally:
+                self._observer.release(self._hardware_owner)
         with self._condition:
             self._check(cancelled)
             self._vision.start(self._hardware_owner, {"detection_enabled": False, "max_fps": 1})
@@ -321,6 +391,10 @@ class AppService:
         self._check(cancelled)
         if request["preparation_error"] is not None:
             raise AppServiceError(request["preparation_error"], "The interaction configuration is unavailable")
+        pinned = request["context"].get("runtime_config")
+        supported = image_support(pinned) if pinned is not None else self.image_capability()["available"]
+        if request["capture_image"] and not supported:
+            raise AppServiceError("image_model_unsupported", "The configured model has no declared image capability")
         image = self._capture(cancelled) if request["capture_image"] else None
         if request["action_id"] is not None:
             self._phase("executing")
@@ -329,23 +403,38 @@ class AppService:
                 self._event("action_result", **result)
             return
         self._phase("generating")
+        self._operation_stage = "cloud"
         if self._cloud is None:
             raise AppServiceError("cloud_unconfigured", "Cloud understanding is not configured")
         completed = False
+        sound = None
         try:
-            for event in self._cloud.stream(request["text"], cancelled=cancelled,
-                                            image_jpeg=image, history=tuple(self._history), **request["context"]):
-                self._check(cancelled)
+            duck = self._speak and self._output is not None and self._output.snapshot().get("kind") == "duck"
+            if duck:
+                plan, completion = self._duck_answer(request, cancelled, image)
+                sound = plan["sound"]
                 with self._condition:
+                    self._reply = plan["reply"]
+                    self._event("answer_delta", text=self._reply)
+                    self._event("answer_done", revision=completion["revision"], finish_reason=completion["finish_reason"])
+                    self._event("interaction_decision", sound=sound, image_used=plan["image_used"])
+                completed = True
+            else:
+                for event in self._cloud.stream(request["text"], cancelled=cancelled,
+                                            image_jpeg=image, history=tuple(self._history), **request["context"]):
                     self._check(cancelled)
-                    if event["type"] == "delta":
-                        if not isinstance(event.get("text"), str) or len(self._reply) + len(event["text"]) > 8000:
-                            raise AppServiceError("response_too_large", "The answer exceeded its size limit")
-                        self._reply += event["text"]
-                        self._event("answer_delta", text=event["text"])
-                    elif event["type"] == "done":
-                        completed = True
-                        self._event("answer_done", revision=event["revision"], finish_reason=event["finish_reason"])
+                    with self._condition:
+                        self._check(cancelled)
+                        if event["type"] == "delta":
+                            if not isinstance(event.get("text"), str) or len(self._reply) + len(event["text"]) > 8000:
+                                raise AppServiceError("response_too_large", "The answer exceeded its size limit")
+                            self._reply += event["text"]
+                            self._event("answer_delta", text=event["text"])
+                        elif event["type"] == "done":
+                            completed = True
+                            self._event("answer_done", revision=event["revision"], finish_reason=event["finish_reason"])
+                            if image is not None:
+                                self._record_image("succeeded", event["revision"])
         finally:
             image = None
         if not completed or not self._reply.strip():
@@ -353,20 +442,87 @@ class AppService:
         self._check(cancelled)
         with self._condition:
             self._check(cancelled)
+            # Keep structured-mode assistant history in the same format as
+            # current answers. Plain assistant prose can produce whitespace-
+            # only JSON streams on otherwise successful provider responses.
+            history_reply = (json.dumps({key: plan[key] for key in ("reply", "sound", "look")}, ensure_ascii=False)
+                             if duck else self._reply)
             self._history.extend(({"role": "user", "content": request["text"]},
-                                  {"role": "assistant", "content": self._reply}))
+                                  {"role": "assistant", "content": history_reply}))
             while len(self._history) > 12 or sum(len(item["content"]) for item in self._history) > 10000:
                 del self._history[:2]
         if self._speak:
+            self._operation_stage = "playback" if duck else "synthesis"
             limits = self._output.snapshot()
             if len(self._reply) > limits.get("max_text_chars", 1200):
                 raise AppServiceError("speech_text_limit", "The answer exceeds the configured speech output limit")
-            result = self._output.speak(self._reply, cancelled=cancelled, on_phase=self._phase)
+            result = (self._output.play(sound, cancelled=cancelled, on_phase=self._phase) if duck else
+                      self._output.speak(self._reply, cancelled=cancelled, on_phase=self._phase))
             self._check(cancelled)
             with self._condition:
                 self._check(cancelled)
+                if result.get("played", True):
+                    self._voice_stage(self._synthesis, "skipped" if duck else "succeeded")
+                    self._voice_stage(self._playback, "succeeded")
+                else:
+                    self._voice_stage(self._synthesis, "skipped")
+                    self._voice_stage(self._playback, "skipped")
                 self._event("playback_done", played=result.get("played", True),
                             audio_seconds=result.get("audio_seconds", 0))
+
+    def _duck_answer(self, request, cancelled, image):
+        context = dict(request["context"])
+        config = context.get("runtime_config") or {}
+        can_look = request["visual_consent"] and image_support(config) and image is None
+        image_sent = False
+        try:
+            for attempt in range(2):
+                prompt = context.get("system_prompt", "") + decision_prompt(can_look=can_look, has_image=image is not None)
+                stream_context = {**context, "system_prompt": prompt, "json_mode": True}
+                raw, completion = "", None
+                self._phase("generating")
+                if image is not None:
+                    image_sent = True
+                    self._record_image("running", config.get("revision"))
+                for event in self._cloud.stream(request["text"], cancelled=cancelled, image_jpeg=image,
+                                                history=tuple(self._history), **stream_context):
+                    self._check(cancelled)
+                    if event["type"] == "delta":
+                        raw += event["text"]
+                        if len(raw) > 8000:
+                            raise CloudClientError("output_limit")
+                    elif event["type"] == "done":
+                        completion = event
+                if completion is None or completion.get("finish_reason") != "stop":
+                    raise CloudClientError("incomplete_response")
+                plan = parse_decision(raw, can_look=can_look)
+                if not plan["look"]:
+                    if image_sent:
+                        self._record_image("succeeded", completion["revision"])
+                    return {**plan, "image_used": image is not None}, completion
+                # Recheck current admission after the cloud delay. A camera
+                # disable/pause cannot be bypassed by an earlier decision.
+                if self._visual_policy is None or not self._visual_policy():
+                    raise AppServiceError("camera_disabled", "Camera use is no longer enabled")
+                image = self._capture(cancelled)
+                self._operation_stage = "cloud"
+                can_look = False
+            raise CloudClientError("invalid_response")
+        except Exception as exc:
+            reject = getattr(self._cloud, "reject_answer", None)
+            if isinstance(exc, CloudClientError) and callable(reject):
+                reject(exc.code, revision=config.get("revision"))
+            if image_sent:
+                self._record_image("cancelled" if cancelled.is_set() else "failed", config.get("revision"),
+                                   getattr(exc, "code", "operation_failed"))
+            raise
+        finally:
+            image = None
+
+    def _record_image(self, state, revision, error=None):
+        with self._condition:
+            self._image_answer = {"state": state, "revision": revision, "error_code": error,
+                                  "checked_at": datetime.now(timezone.utc).isoformat() if state != "running" else None}
 
     def _listen_step(self):
         with self._condition:
@@ -440,6 +596,9 @@ class AppService:
                                    "message": str(exc) if isinstance(exc, (AppServiceError, CloudClientError, ActionError, SpeechOutputError))
                                    else "The application request could not be completed"}
                     with self._condition:
+                        if outcome != "succeeded" and self._operation_stage in ("synthesis", "playback"):
+                            target = self._synthesis if self._operation_stage == "synthesis" else self._playback
+                            self._voice_stage(target, outcome, failure["code"] if failure else "cancelled")
                         self._error = failure
                         self._event("turn_end", state=outcome, error=failure)
                         self._request = self._cancelled = None

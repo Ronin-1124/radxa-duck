@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source": "https://github.com/pollen-robotics/microduck",
+  "revision": "6cdfdaad21bed25e01b450c0dd4e0aee0ae19fde",
+  "license": "Apache-2.0",
+  "bank_version": 5,
+  "seed": 100,
+  "variant": 0,
+  "format": "PCM16 48000 Hz, mono duplicated to stereo",
+  "clips": {
+    "alarm": {
+      "sha256": "16edb3cf04e87c3323c96ae7c0bec0f48d32d5e372613ab8fac3e812e35d4af0",
+      "bytes": 48748,
+      "seconds": 0.25366666666666665
+    },
+    "chirp": {
+      "sha256": "262b7a33e3bee4fb5208856b28c028c6ac789986c0c518f235d97d83f01f72db",
+      "bytes": 24704,
+      "seconds": 0.1284375
+    },
+    "coo": {
+      "sha256": "4ba3c92508e6189d0535436005bf9ad322d9f5ac0fe1b541c84cd82f105d50ff",
+      "bytes": 248176,
+      "seconds": 1.2923541666666667
+    },
+    "greet": {
+      "sha256": "2528956acc5ebca238f2394c6718cd01628ab3c77f548d06232b930b620744e0",
+      "bytes": 107464,
+      "seconds": 0.5594791666666666
+    },
+    "inquire": {
+      "sha256": "82238530f84d50b3b8596f6a82995781b0d3fca9b7a2d7bd84fe8a8030a69afe",
+      "bytes": 95596,
+      "seconds": 0.49766666666666665
+    },
+    "peck": {
+      "sha256": "4248e1a128ed5ceda48a3738f679c3388f449c627b8a9b197fb75cbfe42f9992",
+      "bytes": 57400,
+      "seconds": 0.29872916666666666
+    }
+  }
+}

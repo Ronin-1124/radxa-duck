@@ -120,6 +120,21 @@ class CloudConfigTests(unittest.TestCase):
         store.close()
         self.assert_code("closed", store.runtime_snapshot)
 
+    def test_connection_feedback_keeps_tested_version_when_configuration_changes(self):
+        store = self.store(opener=Opener())
+        self.assertEqual(store.connection_snapshot()['state'], 'unknown')
+        store.save(CONFIG, expected_revision=0)
+        result = store.test_connection(expected_revision=1)
+        store.save({'model': 'next-model'}, expected_revision=1)
+        check = store.connection_snapshot()
+        self.assertEqual(check['revision'], 1)
+        self.assertEqual(check['state'], 'succeeded')
+        self.assertEqual(check['checked_at'], result['checked_at'])
+        self.assertIsNone(check['error_code'])
+        self.assertNotIn(FAKE_KEY, repr(check))
+        check['state'] = 'changed'
+        self.assertEqual(store.connection_snapshot()['state'], 'succeeded')
+
     def test_field_validation_rejects_invalid_config_without_a_write(self):
         store = self.store()
         changes = ({"provider": "other"}, {"extra": True}, {"model": ""}, {"model": "a b"},
