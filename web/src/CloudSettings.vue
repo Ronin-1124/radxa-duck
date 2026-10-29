@@ -29,7 +29,7 @@ const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages
     testUnknown: '设备是否已接收测试请求尚未确认。可以查询任务，或使用同一请求重新提交。',
     testNeedsSave: '先保存当前更改，再测试设备上已保存的配置。', testNeedsConfig: '保存服务地址和模型后，即可测试连接。', testInProgress: '设备正在测试已保存配置，完成后可保存新的更改或再次测试。',
     testHint: '连接测试检查服务与模型列表；实际对话能力需在应用中验证。',
-    queryTask: '查询任务', retrySame: '重试同一请求', testTitle: '连接检查', checkedAt: '检查时间', answerTitle: '实际模型回答', verified: '回答已验证', verificationPending: '已配置 · 待验证', verificationFailed: '模型调用失败', unknown: '状态未知', unconfigured: '未配置', testEmpty: '尚无连接测试记录',
+    queryTask: '查询任务', retrySame: '重试同一请求', testTitle: '连接检查', checkedAt: '检查时间', answerTitle: '实际模型回答', verified: '回答已验证', verificationPending: '已配置 · 待验证', verificationFailed: '模型调用失败', answerRunning: '正在生成回答', answeredAt: '回答时间', checkRunning: '正在检查连接', checkCancelled: '检查已取消', unknown: '状态未知', unconfigured: '未配置', testEmpty: '尚无连接测试记录',
     testCurrentConfig: '当前保存的配置', testEarlierConfig: '此前保存的配置', elapsed: '用时 {time} ms', previousResult: '此结果对应此前保存的配置，当前配置尚未通过本次测试验证。',
     taskStale: '任务状态未更新，请重新查询；下方为上次读取的结果。', resultInvalid: '暂时无法确认测试结果，请重新查询任务。',
     testStates: { queued: '等待测试', running: '正在测试已保存配置', succeeded: '服务可达 · 模型已列出', failed: '连接测试失败', cancelled: '测试已取消', interrupted: '测试已中断' },
@@ -55,7 +55,7 @@ const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages
     testUnknown: 'It is unclear whether the device accepted the test. Check task status or resubmit the same request.',
     testNeedsSave: 'Save your changes before testing the configuration stored on the device.', testNeedsConfig: 'Save a service URL and model before testing the connection.', testInProgress: 'The device is testing its saved configuration. Save new changes or test again after it finishes.',
     testHint: 'This check verifies the service connection and model list. Validate conversation capabilities in an application.',
-    queryTask: 'Check task', retrySame: 'Retry same request', testTitle: 'Connection check', checkedAt: 'Checked at', answerTitle: 'Actual model answer', verified: 'Answer verified', verificationPending: 'Configured · unverified', verificationFailed: 'Model call failed', unknown: 'State unknown', unconfigured: 'Not configured', testEmpty: 'No connection test recorded yet',
+    queryTask: 'Check task', retrySame: 'Retry same request', testTitle: 'Connection check', checkedAt: 'Checked at', answerTitle: 'Actual model answer', verified: 'Answer verified', verificationPending: 'Configured · unverified', verificationFailed: 'Model call failed', answerRunning: 'Generating an answer', answeredAt: 'Answered at', checkRunning: 'Checking connection', checkCancelled: 'Check cancelled', unknown: 'State unknown', unconfigured: 'Not configured', testEmpty: 'No connection test recorded yet',
     testCurrentConfig: 'Currently saved configuration', testEarlierConfig: 'Previously saved configuration', elapsed: '{time} ms elapsed', previousResult: 'This result belongs to a previously saved configuration and does not verify the current configuration.',
     taskStale: 'Task status is not current. Check again; the last received result is shown below.', resultInvalid: 'The test result cannot be confirmed yet. Check task status again.',
     testStates: { queued: 'Queued for testing', running: 'Testing saved configuration', succeeded: 'Service reachable · model listed', failed: 'Connection test failed', cancelled: 'Test cancelled', interrupted: 'Test interrupted' },
@@ -66,9 +66,30 @@ const id = useId()
 const cloud = useCloudSettings()
 const { brain, fresh } = useRobotConsole()
 const answerCloud = computed(() => fresh.value ? brain.value?.cloud : undefined)
-const answerState = computed(() => cloudAnswerState(answerCloud.value))
 const { saved, draft, touched, keyMode, showKey, loading, saving, testing, busy, errors, changed, loadError, actionError,
   conflict, saveUnknown, saveSuccess, resetMessage, testUnknown, canSave, canTest, taskError, taskRefreshing, activeTest, latestTest, testResult } = cloud
+const answerState = computed(() => {
+  const status = answerCloud.value
+  if (status && saved.value && status.revision !== undefined && status.revision !== saved.value.revision)
+    return saved.value.configured ? 'verificationPending' : 'unconfigured'
+  return cloudAnswerState(status)
+})
+const answerRecord = computed(() => answerCloud.value?.answer)
+const currentAnswer = computed(() => answerRecord.value?.revision != null && answerRecord.value.revision === answerCloud.value?.revision
+  && (!saved.value || saved.value.revision === answerRecord.value.revision))
+const liveCheck = computed(() => {
+  const check = answerCloud.value?.connection_check, task = latestTest.value
+  if (!check || check.state === 'unknown') return null
+  if (!task || check.state === 'running') return check
+  // A queued/newer local task can precede the next brain event. Keep its progress
+  // until the snapshot reports a result for that operation.
+  if (check.checked_at && Date.parse(check.checked_at) >= Date.parse(task.updated_utc)) return check
+  if (testResult.value?.revision === check.revision && testResult.value.state === check.state) return check
+  return null
+})
+const currentLiveCheck = computed(() => liveCheck.value?.revision != null && liveCheck.value.revision === saved.value?.revision
+  && liveCheck.value.revision === answerCloud.value?.revision)
+function formatDate(value: string) { return new Intl.DateTimeFormat(locale.value,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)) }
 const clearConfirmation = ref(false)
 const reloadConfirmation = ref(false)
 const validationSummary = ref<HTMLElement>()
@@ -197,8 +218,31 @@ defineExpose({ hasUnsavedChanges: changed, busy: computed(() => saving.value || 
         <p class="reset-message" role="status" aria-atomic="true">{{ saveSuccess ? t('saveDone') : resetMessage ? t('resetDone') : '' }}</p>
       </form>
       <div v-if="testUnknown" class="confirmation" role="status"><p>{{ t('testUnknown') }}</p><div class="confirmation-actions"><button type="button" class="button ui-button" :disabled="busy || taskRefreshing" @click="cloud.recoverTest()">{{ t('queryTask') }}</button><button type="button" class="button ui-button" :disabled="busy || taskRefreshing" @click="cloud.test(true)">{{ t('retrySame') }}</button></div></div>
-      <section class="test-results" :aria-labelledby="`${id}-test-title`"><div class="test-heading"><h3 :id="`${id}-test-title`">{{ t('testTitle') }}</h3><button type="button" class="button ui-button" :disabled="taskRefreshing" @click="cloud.refreshTasks()"><RefreshCw :size="16" aria-hidden="true" />{{ t('queryTask') }}</button></div><UiAlert v-if="taskError" class="operation-error" role="status">{{ t('taskStale') }}</UiAlert><div v-if="latestTest" class="test-result" :data-state="latestTest.state" :data-tone="testTone"><p class="test-state" role="status">{{ taskState }}</p><UiAlert v-if="taskFailure" class="test-error" role="status">{{ errorText(taskFailure) }}</UiAlert><p v-if="checkedAt" class="test-meta test-time">{{ t('checkedAt') }} · <time :datetime="latestTest!.updated_utc">{{ checkedAt }}</time></p><p v-if="testResult" class="test-meta">{{ t(currentResult ? 'testCurrentConfig' : 'testEarlierConfig') }} · {{ t('elapsed', { time: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(testResult.elapsed_ms) }) }}</p><p v-if="testResult && saved && !currentResult" class="test-meta">{{ t('previousResult') }}</p><progress v-if="latestTest.state === 'queued' || latestTest.state === 'running'" :value="latestTest.progress ?? undefined" max="100" :aria-label="t('testTitle')"></progress></div><UiEmptyState v-else compact :icon="TestTube2" :title="t('testEmpty')" /></section>
-      <div class="answer-verification" :data-state="answerState" role="status"><div><h3>{{ t('answerTitle') }}</h3><span v-if="answerCloud?.configured && answerCloud.model" class="answer-model">{{ answerCloud.model }}</span></div><span>{{ t(answerState) }}</span></div>
+      <section class="test-results" :aria-labelledby="`${id}-test-title`">
+        <div class="test-heading"><h3 :id="`${id}-test-title`">{{ t('testTitle') }}</h3><button type="button" class="button ui-button" :disabled="taskRefreshing" @click="cloud.refreshTasks()"><RefreshCw :size="16" aria-hidden="true" />{{ t('queryTask') }}</button></div>
+        <UiAlert v-if="taskError" class="operation-error" role="status">{{ t('taskStale') }}</UiAlert>
+        <div v-if="liveCheck" class="test-result" :data-state="liveCheck.state" :data-tone="currentLiveCheck && liveCheck.state==='succeeded'?'success':liveCheck.state==='failed'?'error':'neutral'">
+          <p class="test-state" role="status">{{ t(liveCheck.state==='running'?'checkRunning':liveCheck.state==='cancelled'?'checkCancelled':`testStates.${liveCheck.state}`) }}</p>
+          <UiAlert v-if="liveCheck.error_code" class="test-error" role="status">{{ errorText(liveCheck.error_code) }}</UiAlert>
+          <p v-if="liveCheck.checked_at" class="test-meta test-time">{{ t('checkedAt') }} · <time :datetime="liveCheck.checked_at">{{ formatDate(liveCheck.checked_at) }}</time></p>
+          <p class="test-meta">{{ t(currentLiveCheck?'testCurrentConfig':'testEarlierConfig') }}</p>
+        </div>
+        <div v-else-if="!fresh && brain?.cloud.connection_check" class="test-result" data-state="unknown" data-tone="neutral"><p class="test-state" role="status">{{ t('unknown') }}</p></div>
+        <div v-else-if="latestTest" class="test-result" :data-state="latestTest.state" :data-tone="testTone">
+          <p class="test-state" role="status">{{ taskState }}</p>
+          <UiAlert v-if="taskFailure" class="test-error" role="status">{{ errorText(taskFailure) }}</UiAlert>
+          <p v-if="checkedAt" class="test-meta test-time">{{ t('checkedAt') }} · <time :datetime="latestTest.updated_utc">{{ checkedAt }}</time></p>
+          <p v-if="testResult" class="test-meta">{{ t(currentResult?'testCurrentConfig':'testEarlierConfig') }} · {{ t('elapsed',{time:new Intl.NumberFormat(locale,{maximumFractionDigits:0}).format(testResult.elapsed_ms)}) }}</p>
+          <p v-if="testResult && saved && !currentResult" class="test-meta">{{ t('previousResult') }}</p>
+          <progress v-if="latestTest.state==='queued'||latestTest.state==='running'" :value="latestTest.progress ?? undefined" max="100" :aria-label="t('testTitle')"></progress>
+        </div>
+        <UiEmptyState v-else compact :icon="TestTube2" :title="t('testEmpty')" />
+      </section>
+      <section class="answer-verification" :data-state="answerState" :aria-labelledby="`${id}-answer-title`">
+        <div class="answer-heading"><div><h3 :id="`${id}-answer-title`">{{ t('answerTitle') }}</h3><span v-if="answerCloud?.configured && answerCloud.model" class="answer-model">{{ answerCloud.model }}</span></div><span class="answer-outcome" role="status">{{ t(answerState) }}</span></div>
+        <UiAlert v-if="currentAnswer && answerRecord?.state==='failed' && answerRecord.error_code" class="answer-error" role="status">{{ errorText(answerRecord.error_code) }}</UiAlert>
+        <p v-if="answerRecord?.checked_at" class="test-meta answer-time">{{ t('answeredAt') }} · <time :datetime="answerRecord.checked_at">{{ formatDate(answerRecord.checked_at) }}</time><span v-if="!currentAnswer"> · {{ t('testEarlierConfig') }}</span></p>
+      </section>
     </section>
 
     <dialog ref="clearDialog" class="ui-dialog clear-dialog" :aria-labelledby="`${id}-clear-title`" :aria-describedby="`${id}-clear-hint`"
@@ -218,10 +262,12 @@ defineExpose({ hasUnsavedChanges: changed, busy: computed(() => saving.value || 
 .cloud-settings .draft-notice { padding:0; border:0; background:transparent; margin-bottom:24px; }
 .cloud-settings .cloud-fields { gap:22px 18px; }
 .cloud-settings .section-heading { margin-bottom:16px; }
-.answer-verification { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-top:24px; padding-top:22px; border-top:1px solid var(--border); }
-.answer-verification > span { color:var(--muted); font-size:12px; text-align:end; }
-.answer-verification[data-state="verified"] > span { color:var(--accent); }
-.answer-verification[data-state="verificationFailed"] > span { color:var(--offline); }
+.answer-verification { margin-top:24px; padding-top:22px; border-top:1px solid var(--border); }
+.answer-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.answer-outcome { color:var(--muted); font-size:12px; text-align:end; }
+.answer-verification[data-state="verified"] .answer-outcome { color:var(--accent); }
+.answer-verification[data-state="verificationFailed"] .answer-outcome { color:var(--offline); }
+.answer-error { margin-top:14px; }
 .answer-model { display:block; max-width:30ch; margin-top:7px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
 
 .settings-card { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-soft); }
