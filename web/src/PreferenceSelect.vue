@@ -10,13 +10,21 @@ const props = withDefaults(defineProps<{
   options: readonly Option[]
   icon?: Component
   align?: 'start' | 'end'
-}>(), { align: 'end' })
+  placement?: 'top' | 'bottom'
+  compact?: boolean
+}>(), { align: 'end', placement: 'bottom', compact: false })
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const id = useId()
 const root = ref<HTMLElement>()
 const trigger = ref<HTMLButtonElement>()
 const listbox = ref<HTMLElement>()
 const expanded = ref(false)
+const panelOffset = ref(0)
+function positionCompactPanel(): void {
+  if (!props.compact || !root.value) return
+  const width = Math.min(248, innerWidth - 40)
+  panelOffset.value = Math.min(0, innerWidth - 16 - root.value.getBoundingClientRect().left - width)
+}
 const pointerFocus = ref(false)
 const activeIndex = ref(0)
 const selectedIndex = computed(() => props.options.findIndex(option => option.value === props.modelValue))
@@ -32,6 +40,7 @@ function close(): void {
 
 function open(index = Math.max(0, selectedIndex.value)): void {
   if (!props.options.length) return
+  positionCompactPanel()
   activeIndex.value = index
   expanded.value = true
 }
@@ -122,16 +131,18 @@ onMounted(() => {
   document.addEventListener('pointerdown', dismissOutside)
   document.addEventListener('focusin', dismissOutside)
   window.addEventListener('blur', close)
+  window.addEventListener('resize', positionCompactPanel)
 })
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', dismissOutside)
   document.removeEventListener('focusin', dismissOutside)
   window.removeEventListener('blur', close)
+  window.removeEventListener('resize', positionCompactPanel)
 })
 </script>
 
 <template>
-  <div ref="root" class="preference-select" :data-align="align">
+  <div ref="root" class="preference-select" :data-align="align" :data-placement="placement" :class="{ compact }">
     <button ref="trigger" type="button" class="preference-trigger" role="combobox"
       :aria-label="`${label}: ${selected?.label ?? ''}`" aria-haspopup="listbox"
       :aria-expanded="expanded" :aria-controls="`${id}-listbox`" :aria-activedescendant="activeId"
@@ -143,7 +154,7 @@ onBeforeUnmount(() => {
       <ChevronDown :size="14" class="trigger-chevron" aria-hidden="true" />
     </button>
     <Transition name="preference-panel">
-      <div v-if="expanded" class="preference-panel">
+      <div v-if="expanded" class="preference-panel" :style="compact ? { left: `${panelOffset}px`, right: 'auto' } : undefined">
         <div :id="`${id}-label`" class="panel-label">{{ label }}</div>
         <div :id="`${id}-listbox`" ref="listbox" class="preference-options" role="listbox" :aria-labelledby="`${id}-label`">
           <div v-for="(option, index) in options" :id="`${id}-option-${index}`" :key="option.value"
@@ -165,6 +176,12 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.compact.preference-select { min-width:46px; }
+.compact .preference-trigger { width:46px; min-height:46px; padding:0; justify-content:center; background:transparent; border-color:transparent; box-shadow:none; }
+.compact .trigger-label,.compact .trigger-chevron { display:none; }
+[data-placement="top"] .preference-panel { top:auto; bottom:calc(100% + 12px); transform-origin:bottom left; }
+[data-placement="top"] .preference-panel::before { top:100%; height:16px; }
+
 .preference-select { position: relative; min-width: 142px; }
 .preference-select:focus-within { z-index: 41; }
 .preference-trigger {

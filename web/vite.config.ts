@@ -5,7 +5,6 @@ import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const root = fileURLToPath(new URL('.', import.meta.url))
-const livePaths = ['/api/speech/live', '/api/vision/live']
 
 function serviceTarget(value: string | undefined): string | undefined {
   if (!value?.trim()) return undefined
@@ -21,7 +20,7 @@ function serviceTarget(value: string | undefined): string | undefined {
 /** Missing configuration must return an error rather than an SPA page or hanging upgrade. */
 function unconfiguredService(): Plugin {
   const rejectUpgrade = (request: IncomingMessage, socket: Duplex): void => {
-    if (!livePaths.includes(request.url?.split('?')[0] ?? '')) return
+    if (!request.url?.startsWith('/api/')) return
     socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
   }
   const rejectStatus: import('vite').Connect.NextHandleFunction = (request, response, next) => {
@@ -46,7 +45,7 @@ export default defineConfig(({ mode }) => {
       target,
       ws: true,
       changeOrigin: true,
-      // The board service validates the original browser Origin for both sockets.
+      // The board service validates the original browser Origin for event and camera sockets.
       rewriteWsOrigin: false,
     },
   } : {}

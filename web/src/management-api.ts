@@ -79,7 +79,7 @@ export class ManagementApiError extends Error {
 export function createRequestId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join('')
 }
-async function request<T>(path: string, guard: Guard<T>, options: { method?: 'GET' | 'POST' | 'PUT' | 'PATCH'; body?: unknown; signal?: AbortSignal; maxBytes?: number } = {}): Promise<T> {
+export async function request<T>(path: string, guard: Guard<T>, options: { method?: 'GET' | 'POST' | 'PUT' | 'PATCH'; body?: unknown; signal?: AbortSignal; maxBytes?: number } = {}): Promise<T> {
   const controller = new AbortController()
   const abort = () => controller.abort()
   options.signal?.addEventListener('abort', abort, { once: true })

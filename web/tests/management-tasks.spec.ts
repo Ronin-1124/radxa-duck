@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import { mockManagement, networkStatus, powerStatus, task } from './management-fixture'
+import { mockManagement, openDeviceSection, networkStatus, powerStatus, task } from './management-fixture'
 
 const allowed = { available: true, reason: null }
 const availableReads = {
@@ -18,54 +18,49 @@ async function freezeClock(page: Page): Promise<void> {
   await page.clock.pauseAt(new Date(time.getTime() + 1000))
 }
 
-test('new network and power actions wait for a successful initial task recovery', async ({ page }) => {
-  const held: Route[] = []
-  let hold = true
-  const mock = await mockManagement(page, { reads: availableReads, handle: async route => {
-    if (new URL(route.request().url()).pathname === '/api/tasks' && hold) { held.push(route); return true }
-    return false
-  } })
-  await page.goto('/device')
-  await expect(network(page)).toContainText('Duck Lab')
-  await expect.poll(() => held.length).toBe(2)
-  await expect(scanButton(page)).toBeDisabled()
-  await expect(rebootButton(page)).toBeDisabled()
-  hold = false
-  await Promise.all(held.splice(0).map(route => route.fulfill({ status: 503,
-    json: { schema_version: 1, error: { code: 'tasks_unavailable', message: 'Task history unavailable' } } })))
-  await expect(queryButton(network(page))).toBeEnabled()
-  await expect(queryButton(maintenance(page))).toBeEnabled()
-  await expect(scanButton(page)).toBeDisabled()
-  await expect(rebootButton(page)).toBeDisabled()
-  await queryButton(network(page)).click()
-  await expect(scanButton(page)).toBeEnabled()
-  await expect(rebootButton(page)).toBeDisabled()
-  await queryButton(maintenance(page)).click()
-  await expect(rebootButton(page)).toBeEnabled()
-  expect(mock.requests.every(request => request.method === 'GET')).toBe(true)
-  expect(mock.sockets).toEqual([])
-})
+for (const section of ['network', 'maintenance'] as const) {
+  const card = section === 'network' ? network : maintenance
+  const action = section === 'network' ? scanButton : rebootButton
 
-test('an authoritative empty history clears recovered active tasks and unlocks controls', async ({ page }) => {
-  const connecting = task('network.connect', { state: 'running', phase: 'connecting', progress: 20 })
-  const rebooting = task('power.reboot', { task_id: 'b'.repeat(32), request_id: 'recovered-power-0001',
-    state: 'running', phase: 'stopping_capture', progress: 20 })
-  const mock = await mockManagement(page, { reads: { ...availableReads,
-    '/api/tasks': { schema_version: 1, tasks: [connecting, rebooting] } } })
-  await page.goto('/device')
-  await expect(network(page).locator('.management-task')).toHaveAttribute('data-state', 'running')
-  await expect(maintenance(page).locator('.management-task')).toHaveAttribute('data-state', 'running')
-  await expect(scanButton(page)).toBeDisabled()
-  await expect(rebootButton(page)).toBeDisabled()
-  mock.reads['/api/tasks'] = { schema_version: 1, tasks: [] }
-  await queryButton(network(page)).click()
-  await expect(network(page).locator('.management-task')).toHaveCount(0)
-  await expect(scanButton(page)).toBeEnabled()
-  await queryButton(maintenance(page)).click()
-  await expect(maintenance(page).locator('.management-task')).toHaveCount(0)
-  await expect(rebootButton(page)).toBeEnabled()
-  expect(mock.requests.every(request => request.method === 'GET')).toBe(true)
-})
+  test(`${section} actions wait for a successful initial task recovery`, async ({ page }) => {
+    const held: Route[] = []
+    let hold = true
+    const mock = await mockManagement(page, { reads: availableReads, handle: async route => {
+      if (new URL(route.request().url()).pathname === '/api/tasks' && hold) { held.push(route); return true }
+      return false
+    } })
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, section)
+    await expect.poll(() => held.length).toBe(1)
+    await expect(action(page)).toBeDisabled()
+    hold = false
+    await held[0]!.fulfill({ status: 503,
+      json: { schema_version: 1, error: { code: 'tasks_unavailable', message: 'Task history unavailable' } } })
+    await expect(queryButton(card(page))).toBeEnabled()
+    await expect(action(page)).toBeDisabled()
+    await queryButton(card(page)).click()
+    await expect(action(page)).toBeEnabled()
+    expect(mock.requests.every(request => request.method === 'GET')).toBe(true)
+    expect(mock.sockets).toEqual([])
+  })
+
+  test(`${section} clears recovered active tasks after an authoritative empty history`, async ({ page }) => {
+    const connecting = task('network.connect', { state: 'running', phase: 'connecting', progress: 20 })
+    const rebooting = task('power.reboot', { task_id: 'b'.repeat(32), request_id: 'recovered-power-0001',
+      state: 'running', phase: 'stopping_capture', progress: 20 })
+    const mock = await mockManagement(page, { reads: { ...availableReads,
+      '/api/tasks': { schema_version: 1, tasks: [connecting, rebooting] } } })
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, section)
+    await expect(card(page).locator('.management-task')).toHaveAttribute('data-state', 'running')
+    await expect(action(page)).toBeDisabled()
+    mock.reads['/api/tasks'] = { schema_version: 1, tasks: [] }
+    await queryButton(card(page)).click()
+    await expect(card(page).locator('.management-task')).toHaveCount(0)
+    await expect(action(page)).toBeEnabled()
+    expect(mock.requests.every(request => request.method === 'GET')).toBe(true)
+  })
+}
 
 test('leaving the device view aborts pending task reads and stops their polling', async ({ page }) => {
   await freezeClock(page)
@@ -88,14 +83,15 @@ test('leaving the device view aborts pending task reads and stops their polling'
     if (new URL(route.request().url()).pathname === '/api/tasks') { held.push(route); return true }
     return false
   } })
-  await page.goto('/device')
-  await expect.poll(() => held.length).toBe(2)
-  await page.getByRole('link', { name: '总览', exact: true }).click()
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
+  await expect.poll(() => held.length).toBe(1)
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click()
   await expect(page).toHaveURL(/\/overview$/)
   const aborted = await page.evaluate(() => (window as unknown as {
     managementTaskReads: { aborted: boolean }[]
   }).managementTaskReads)
-  expect(aborted).toEqual([{ aborted: true }, { aborted: true }])
+  expect(aborted).toEqual([{ aborted: true }])
   await Promise.all(held.splice(0).map(route => route.abort().catch(() => {})))
   const count = mock.requests.filter(request => request.path === '/api/tasks').length
   await page.clock.runFor(45_000)
@@ -117,7 +113,8 @@ test('a task tracked after a status read began survives that older response', as
     if (path === '/api/tasks' && holdRead) { heldRead = route; return true }
     return false
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
   await expect(scanButton(page)).toBeEnabled()
   await scanButton(page).click()
   await expect.poll(() => Boolean(heldPost)).toBe(true)
@@ -160,10 +157,11 @@ test('an unconfirmed power request can be retried explicitly with the same ID an
     await route.fulfill({ status: 202, json: accepted })
     return true
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'maintenance')
   await expect(rebootButton(page)).toBeEnabled()
   await rebootButton(page).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认重启设备', exact: true }).click()
+  await maintenance(page).getByRole('dialog').getByRole('button', { name: '确认重启设备', exact: true }).click()
   const retry = maintenance(page).getByRole('button', { name: '重试原操作', exact: true })
   await expect(retry).toBeVisible()
   await expect(maintenance(page)).toContainText('任务记录暂时不可用')
@@ -173,12 +171,12 @@ test('an unconfirmed power request can be retried explicitly with the same ID an
   await queryButton(maintenance(page)).click()
   await expect(retry).toBeEnabled()
   await retry.click()
-  await expect(page.getByRole('dialog')).toContainText('确认重启')
+  await expect(maintenance(page).getByRole('dialog')).toContainText('确认重启')
   expect(posts).toBe(1)
-  await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
+  await maintenance(page).getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
   expect(posts).toBe(1)
   await retry.click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认重启设备', exact: true }).click()
+  await maintenance(page).getByRole('dialog').getByRole('button', { name: '确认重启设备', exact: true }).click()
   await expect(maintenance(page).locator('.management-task')).toHaveAttribute('data-state', 'queued')
   const writes = mock.requests.filter(request => request.path === '/api/power' && request.method === 'POST')
   expect(writes).toHaveLength(2)
@@ -201,7 +199,8 @@ test('an unconfirmed Wi-Fi scan retries only after an explicit click and reuses 
     await route.fulfill({ status: 202, json: accepted })
     return true
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
   await expect(scanButton(page)).toBeEnabled()
   await scanButton(page).click()
   const retry = network(page).getByRole('button', { name: '重试原操作', exact: true })
@@ -236,12 +235,13 @@ test('a Wi-Fi connection retry keeps its network and ID, requires a fresh passwo
     await route.fulfill({ status: 202, json: accepted })
     return true
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
   await network(page).getByRole('button', { name: /Original Wi-Fi/ }).click()
   const password = network(page).getByLabel('Wi-Fi 密码', { exact: true })
   await password.fill('first-test-password')
   await network(page).getByRole('button', { name: '连接此网络', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认切换网络', exact: true }).click()
+  await network(page).getByRole('dialog').getByRole('button', { name: '确认切换网络', exact: true }).click()
   const retry = network(page).getByRole('button', { name: '重试原操作', exact: true })
   await expect(retry).toBeVisible()
   await expect(password).toHaveValue('')
@@ -254,9 +254,9 @@ test('a Wi-Fi connection retry keeps its network and ID, requires a fresh passwo
   await expect(retry).toBeDisabled()
   await password.fill('second-test-password')
   await retry.click()
-  await expect(page.getByRole('dialog')).toContainText('Original Wi-Fi')
+  await expect(network(page).getByRole('dialog')).toContainText('Original Wi-Fi')
   expect(posts).toBe(1)
-  await page.getByRole('dialog').getByRole('button', { name: '确认切换网络', exact: true }).click()
+  await network(page).getByRole('dialog').getByRole('button', { name: '确认切换网络', exact: true }).click()
   await expect(network(page).locator('.management-task')).toHaveAttribute('data-task-id', 'f'.repeat(32))
   const writes = mock.requests.filter(request => request.path === '/api/network/connect' && request.method === 'POST')
   expect(writes).toHaveLength(2)

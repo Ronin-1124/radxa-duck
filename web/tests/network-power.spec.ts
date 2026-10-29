@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { mockManagement, networkStatus, powerStatus, task } from './management-fixture'
+import { mockManagement, openDeviceSection, networkStatus, powerStatus, task } from './management-fixture'
 import type { ManagementTask } from '../src/management-types'
 
 const allowed = { available: true, reason: null }
@@ -9,12 +9,15 @@ const at = (second: number) => `2026-10-27T02:00:0${second}+00:00`
 
 test('live capability reasons disable unavailable network, power and update operations', async ({ page }) => {
   const mock = await mockManagement(page)
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
   await expect(page.locator('.network-card')).toContainText('Duck Lab')
   await expect(page.locator('.network-card')).toContainText('192.168.2.151')
   await expect(page.locator('.network-card')).toContainText('无交互配网权限')
+  await expect(page.getByRole('button', { name: '搜索 Wi-Fi', exact: true })).toBeDisabled()
+  await openDeviceSection(page, 'maintenance')
   await expect(page.locator('.maintenance-card')).toContainText('无交互电源权限')
-  for (const name of ['搜索 Wi-Fi', '重启设备', '关闭设备', '检查更新']) await expect(page.getByRole('button', { name, exact: true })).toBeDisabled()
+  for (const name of ['重启设备', '关闭设备', '检查更新']) await expect(page.getByRole('button', { name, exact: true })).toBeDisabled()
   expect(mock.requests.filter(r => r.method !== 'GET')).toEqual([])
   expect(mock.sockets).toEqual([])
 })
@@ -38,7 +41,8 @@ test('Wi-Fi scan, connection confirmation and task completion remain separate st
     if (path === '/api/network/confirm') { await route.fulfill({ json: { task_id: body.task_id, confirmed: true } }); return true }
     return false
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'network')
   const card = page.locator('.network-card')
   await expect(card.getByRole('button', { name: '搜索 Wi-Fi', exact: true })).toBeEnabled()
   await card.getByRole('button', { name: '搜索 Wi-Fi', exact: true }).click()
@@ -94,7 +98,8 @@ test('power requires confirmation and recovers an accepted schedule without repl
     mock.reads['/api/tasks'] = { schema_version: 1, tasks: [accepted] }
     return true
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'maintenance')
   const card = page.locator('.maintenance-card')
   const restart = card.getByRole('button', { name: '重启设备', exact: true })
   await expect(restart).toBeEnabled()
@@ -113,6 +118,7 @@ test('power requires confirmation and recovers an accepted schedule without repl
   mock.reads['/api/tasks'] = { schema_version: 1, tasks: [accepted] }
   mock.reads['/api/power/status'] = { ...power, scheduled: { action: 'reboot', type: 'reboot', scheduled_usec: 1793066405000000, scheduled_utc: at(5) } }
   await page.reload()
+  await openDeviceSection(page, 'maintenance')
   await expect(card.locator('.management-task')).toHaveAttribute('data-state', 'succeeded')
   await expect(card.locator('.management-task')).toContainText('已安排重启')
   await expect(card).toContainText('网页断开不代表操作已完成')
@@ -128,7 +134,8 @@ test('an uncertain power response stays unconfirmed until the request ID is foun
     requestId = route.request().postDataJSON().request_id
     await route.abort(); return true
   } })
-  await page.goto('/device')
+  await page.goto('/overview?settings=1&tab=device')
+  await openDeviceSection(page, 'maintenance')
   const card = page.locator('.maintenance-card')
   await expect(card.getByRole('button', { name: '关闭设备', exact: true })).toBeEnabled()
   await card.getByRole('button', { name: '关闭设备', exact: true }).click()

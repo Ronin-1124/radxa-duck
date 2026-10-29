@@ -27,13 +27,6 @@ export const updateStatus: UpdateStatus = { schema_version: 1, type: 'update_sta
   installed_version: null, latest_version: null, available: false, reason: 'package_not_installed', capabilities: { check: false, install: false, rollback: false } }
 export const cloudConfig: CloudConfig = { schema_version: 1, revision: 2, configured: true, provider: 'openai-compatible',
   base_url: 'https://api.example.com/v1', model: 'test-model', timeout_seconds: 8, has_api_key: true, updated_utc: '2026-10-27T02:00:00+00:00' }
-export const speechHealth = { schema_version: 1, state: 'idle', ready: true, provider: 'cpu' }
-const settings = { model: 'yolo26n', rotation: 90, detection_enabled: true, max_fps: 10, score_threshold: 0.35 }
-export const visionStatus = { type: 'state', schema_version: 1, revision: 1, state: 'idle', ready: true, session_id: null,
-  owned: false, settings, stats: { frames: 0 }, error: null,
-  capabilities: { transport: 'jpeg-websocket-v1', available_models: ['yolo26n', 'yolo26s'], rotations: [0, 90, 180, 270],
-    default_settings: settings, max_fps: 15, max_jpeg_bytes: 262144, jpeg_quality: 75, capture_size: [640, 480], ack_timeout_seconds: 3 } }
-
 export function task(kind: TaskKind, patch: Partial<ManagementTask> = {}): ManagementTask {
   return { schema_version: 1, task_id: 'a'.repeat(32), request_id: 'test-request-0001', kind, state: 'queued', phase: 'queued',
     progress: null, created_utc: '2026-10-27T02:00:00+00:00', updated_utc: '2026-10-27T02:00:00+00:00', result: null, error: null, ...patch }
@@ -46,7 +39,7 @@ export async function mockManagement(page: Page, options: {
     '/api/device/status': structuredClone(deviceStatus), '/api/audio': structuredClone(audioStatus),
     '/api/network/status': structuredClone(networkStatus), '/api/power/status': structuredClone(powerStatus),
     '/api/update/status': structuredClone(updateStatus), '/api/cloud/config': structuredClone(cloudConfig),
-    '/api/tasks': { schema_version: 1, tasks: [] }, '/api/health': speechHealth, '/api/vision/status': visionStatus,
+    '/api/tasks': { schema_version: 1, tasks: [] },
     ...options.reads,
   }
   const requests: { method: string; path: string; headers: Record<string, string>; body: Record<string, unknown> | null }[] = []
@@ -60,4 +53,10 @@ export async function mockManagement(page: Page, options: {
   })
   await page.routeWebSocket(/\/api\//, socket => { sockets.push(socket.url()); socket.close() })
   return { reads, requests, sockets }
+}
+
+export async function openDeviceSection(page: Page, section: 'audio' | 'network' | 'maintenance'): Promise<void> {
+  const names = { audio: '音频设备', network: '网络', maintenance: '系统维护' }
+  const button = page.getByRole('dialog', { name: '设置', exact: true }).getByRole('button', { name: names[section], exact: true })
+  if (await button.getAttribute('aria-expanded') !== 'true') await button.click()
 }

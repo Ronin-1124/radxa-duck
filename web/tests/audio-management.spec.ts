@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { audioStatus, mockManagement } from './management-fixture'
+import { audioStatus, mockManagement, openDeviceSection } from './management-fixture'
 
 function panel(page: Page) { return page.getByRole('region', { name: '音频设备', exact: true }) }
 function volume(page: Page) { return panel(page).getByRole('spinbutton', { name: '扬声器音量', exact: true }) }
@@ -22,7 +22,8 @@ test.describe('board audio management', () => {
       }
       await route.fulfill({ json: snapshot }); return true
     } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(volume(page)).toHaveValue('30')
     await expect(panel(page)).toContainText('Pollen HAT microphone')
     await expect(panel(page)).toContainText('Pollen HAT speaker')
@@ -59,7 +60,8 @@ test.describe('board audio management', () => {
       }
       await route.fulfill({ json: snapshot }); return true
     } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(volume(page)).toHaveValue('30')
     await volume(page).fill('66')
     await apply(page).click()
@@ -83,7 +85,8 @@ test.describe('board audio management', () => {
       if (new URL(route.request().url()).pathname !== '/api/audio') return false
       await route.fulfill({ json: snapshot }); return true
     } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(volume(page)).toHaveValue('30')
     await volume(page).fill('65')
     snapshot.output.volume_percent = 35
@@ -107,7 +110,8 @@ test.describe('board audio management', () => {
       }
       await route.fulfill({ json: snapshot }); return true
     } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(volume(page)).toHaveValue('30')
     await volume(page).fill('40')
     snapshot.output.volume_percent = 0
@@ -128,7 +132,8 @@ test.describe('board audio management', () => {
     snapshot.output = { device: null, volume_percent: null, muted: null }
     snapshot.capabilities = { output_volume: false, output_mute: false }
     const mock = await mockManagement(page, { reads: { '/api/audio': snapshot } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(panel(page)).toContainText('未发现输入设备')
     await expect(panel(page)).toContainText('未发现输出设备')
     await expect(volume(page)).toHaveValue('')
@@ -147,7 +152,8 @@ test.describe('board audio management', () => {
       if (route.request().method() === 'PATCH') snapshot.output.volume_percent = route.request().postDataJSON().volume_percent
       await route.fulfill({ json: snapshot }); return true
     } })
-    await page.goto('/device')
+    await page.goto('/overview?settings=1&tab=device')
+    await openDeviceSection(page, 'audio')
     await expect(volume(page)).toHaveValue('30')
     for (const invalid of ['101', '-1', '10.5', '']) {
       await volume(page).fill(invalid)

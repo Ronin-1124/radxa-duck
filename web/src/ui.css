@@ -37,8 +37,6 @@
 }
 @media (prefers-reduced-motion: no-preference) {
   .ui-button, .ui-icon-button { transition: transform var(--motion-fast, 180ms) var(--ease-out, ease-out), background-color 180ms ease, color 180ms ease, border-color 180ms ease, box-shadow 180ms ease; }
-  .route-content { animation: ui-page-arrive 350ms var(--ease-out, ease-out); }
-  @keyframes ui-page-arrive { from { opacity: 0; translate: 0 6px; } to { opacity: 1; translate: 0 0; } }
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .ui-button:not(:disabled):hover, .ui-icon-button:not(:disabled):hover { transform: translateY(-2px); }
