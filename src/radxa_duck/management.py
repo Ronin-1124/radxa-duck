@@ -56,6 +56,7 @@ class UpdateStatus:
 
 class ManagementServices:
     def __init__(self, state_dir: Path, speech, vision):
+        self._hardware = (speech, vision)
         self.device = DeviceStatus()
         self.audio = AudioDevices()
         self.network = NetworkService()
@@ -71,6 +72,14 @@ class ManagementServices:
             pass
         from .power import PowerService
         self.power = PowerService((speech, vision))
+
+    def attach_application(self, apps):
+        from .power import PowerService
+        self.power = PowerService((apps, *self._hardware))
+
+    def attach_runtime(self, brain, apps, observer):
+        from .power import PowerService
+        self.power = PowerService((brain, apps, observer, *self._hardware))
 
     def close(self):
         # Signal checkpoint rollback before waiting for task workers.

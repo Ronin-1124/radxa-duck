@@ -20,10 +20,18 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from .speech import SpeechError, SpeechService
+from .app_routes import create_app_routes
+from .app_service import AppService
+from .brain import BrainService, TurnContext
+from .cloud_client import CloudClient
+from .speech_output import SpeechOutput
 from .management import ManagementServices, create_management_routes
+from .identity import IdentityStore
+from .console_routes import create_console_routes
 from .vision import MODELS
 from .vision_routes import create_vision_routes
 from .vision_service import VisionService, VisionServiceError
+from .vision_observer import VisionObserver, create_observer_routes
 
 
 def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
@@ -31,7 +39,9 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
                vision_models: dict[str, Path] | None = None, camera_device: str = "/dev/video0",
                camera_rotation: int = 0, vision_service_factory=VisionService,
                management_state_dir: Path | None = None,
-               management_factory=ManagementServices) -> Starlette:
+               management_factory=ManagementServices, tts_model_dir: Path | None = None,
+               tts_volume: int = 45, tts_speaker_id: int = 0, apps_factory=AppService,
+               brain_camera_enabled: bool = False) -> Starlette:
     allowed_origins = set()
     hosts = {"127.0.0.1", "localhost", "testserver"}
     for origin in origins:
@@ -51,7 +61,10 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
         app.state.speech = service
         vision = None
         management = None
+        apps = None
+        brain = identity = observer = None
         app.state.management = None
+        app.state.apps = None
         try:
             vision = vision_service_factory(vision_models, device=camera_device, rotation=camera_rotation)
             app.state.vision = vision
@@ -72,15 +85,52 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
                 app.state.management = management
                 if cancelled is not None:
                     raise cancelled
+            identity = IdentityStore(management_state_dir)
+            app.state.identity = identity
+            context = TurnContext(identity)
+            observer = VisionObserver(vision)
+            app.state.vision_observer = observer
+            cloud_store = getattr(management, "cloud", None)
+            apps = apps_factory(service, vision,
+                                cloud=CloudClient(cloud_store) if cloud_store is not None else None,
+                                cloud_config=cloud_store,
+                                output=SpeechOutput(tts_model_dir, volume_percent=tts_volume,
+                                                    speaker_id=tts_speaker_id), context_provider=context.for_turn)
+            app.state.apps = apps
+            attach = getattr(management, "attach_application", None)
+            if callable(attach):
+                attach(apps)
+            brain = BrainService(apps, service, observer, identity, cloud_config=cloud_store,
+                                 device=getattr(management, "device", None), context=context,
+                                 camera_enabled=brain_camera_enabled)
+            app.state.brain = brain
+            attach_runtime = getattr(management, "attach_runtime", None)
+            if callable(attach_runtime):
+                attach_runtime(brain, apps, observer)
             yield
         finally:
             # Signal both workers promptly and finish both cleanups even when
             # one fails. Neither camera nor microphone waits for the other.
+            # Stop resident admission before closing workers or config stores.
+            # Every cleanup still runs even if this first stage fails.
+            async def close_services():
+                results = []
+                if brain is not None:
+                    results.extend(await asyncio.gather(asyncio.to_thread(brain.close), return_exceptions=True))
+                results.extend(await asyncio.gather(*(asyncio.to_thread(item.close) for item in services),
+                                                    return_exceptions=True))
+                if identity is not None:
+                    results.extend(await asyncio.gather(asyncio.to_thread(identity.close), return_exceptions=True))
+                return results
+
             services = [service] if vision is None else [service, vision]
             if management is not None:
                 services.append(management)
-            cleanup = asyncio.gather(*(asyncio.to_thread(item.close) for item in services),
-                                     return_exceptions=True)
+            if apps is not None:
+                services.append(apps)
+            if observer is not None:
+                services.append(observer)
+            cleanup = asyncio.create_task(close_services())
             cancelled = None
             while not cleanup.done():
                 try:
@@ -183,6 +233,9 @@ def create_app(model_dir: Path, vad_model: Path, *, origins: tuple[str, ...],
     routes = [Route("/api/health", health), WebSocketRoute("/api/speech/live", live)]
     routes.extend(create_vision_routes(allowed_origins))
     routes.extend(create_management_routes(allowed_origins))
+    routes.extend(create_app_routes(allowed_origins))
+    routes.extend(create_console_routes(allowed_origins))
+    routes.extend(create_observer_routes(allowed_origins))
     if web_root is not None:
         index = Path(web_root) / "index.html"
         if not index.is_file():
@@ -207,10 +260,15 @@ def main() -> None:
     parser.add_argument("--web-root", type=Path, help="built web assets to serve from the same process")
     parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/radxa-duck",
                         help="private persistent board configuration and task state")
+    parser.add_argument("--tts-model-dir", type=Path, help="optional CPU speech synthesis model directory")
+    parser.add_argument("--tts-volume", type=int, default=45, choices=range(0, 101), metavar="0..100")
+    parser.add_argument("--tts-speaker-id", type=int, default=0)
     parser.add_argument("--vision-model", action="append", default=[], metavar="NAME=PATH",
                         help=f"configured RKNN model ({', '.join(MODELS)}), repeatable; omitted means preview only")
     parser.add_argument("--camera-device", default="/dev/video0")
     parser.add_argument("--camera-rotation", type=int, choices=(0, 90, 180, 270), default=0)
+    parser.add_argument("--brain-camera", action="store_true",
+                        help="explicitly enable resident camera/NPU perception; otherwise camera stays demand-driven")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
@@ -224,12 +282,14 @@ def main() -> None:
     try:
         app = create_app(args.model_dir, args.vad_model, origins=origins, web_root=args.web_root,
                          vision_models=vision_models, camera_device=args.camera_device,
-                         camera_rotation=args.camera_rotation, management_state_dir=args.state_dir)
+                         camera_rotation=args.camera_rotation, management_state_dir=args.state_dir,
+                         tts_model_dir=args.tts_model_dir, tts_volume=args.tts_volume,
+                         tts_speaker_id=args.tts_speaker_id, brain_camera_enabled=args.brain_camera)
     except (ValueError, VisionServiceError) as exc:
         parser.error(str(exc))
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, workers=1, proxy_headers=False,
-                ws="websockets-sansio", ws_max_size=2048, ws_max_queue=4,
+                ws="websockets-sansio", ws_max_size=12 * 1024, ws_max_queue=4,
                 ws_ping_interval=5, ws_ping_timeout=5,
                 timeout_graceful_shutdown=35, access_log=False)
 

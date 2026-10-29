@@ -33,9 +33,11 @@ class SpeechService:
         self._condition = threading.Condition()
         self._state = "loading"
         self._ready = False
+        self._active = False
         self._closing = False
         self._suspended = False
         self._owner: str | None = None
+        self._private_owner: str | None = None
         self._session_id: str | None = None
         self._cancelled: threading.Event | None = None
         self._partial = ""
@@ -62,21 +64,23 @@ class SpeechService:
     def snapshot(self, owner: str | None = None) -> dict:
         with self._condition:
             self._expire_text()
+            visible = self._private_owner is None or owner == self._private_owner
             return {
                 "type": "state", "schema_version": 1, "revision": self._revision,
                 "state": self._state, "ready": self._ready and not self._suspended,
+                "active": self._active,
                 "maintenance": self._suspended,
                 "session_id": self._session_id,
                 "owned": owner is not None and self._owner == owner,
-                "partial_text": self._partial,
-                "segments": [dict(segment) for segment in self._segments],
+                "partial_text": self._partial if visible else "",
+                "segments": [dict(segment) for segment in self._segments] if visible else [],
                 "audio_seconds": self._audio_seconds,
                 "error": dict(self._error) if self._error else None,
                 "backend": "sherpa-onnx/zipformer", "provider": "cpu",
             }
 
-    def start(self, owner: str) -> None:
-        if not isinstance(owner, str) or not owner:
+    def start(self, owner: str, *, private: bool = False) -> None:
+        if not isinstance(owner, str) or not owner or type(private) is not bool:
             raise SpeechError("invalid_request", "A connection owner is required")
         with self._condition:
             if self._closing:
@@ -90,6 +94,7 @@ class SpeechService:
                     return
                 raise SpeechError("busy", "A microphone session is already active")
             self._owner = owner
+            self._private_owner = owner if private else None
             self._session_id = uuid.uuid4().hex
             self._cancelled = threading.Event()
             self._partial = ""
@@ -117,6 +122,7 @@ class SpeechService:
             if (self._session_id == session_id and self._cancelled is not None
                     and not self._cancelled.is_set()):
                 self._state = "listening"
+                self._active = True
                 self._changed()
 
     def suspend(self, timeout: float = 15) -> None:
@@ -135,6 +141,16 @@ class SpeechService:
         with self._condition:
             self._suspended = False
             self._changed()
+
+    def clear_transcript(self, session_id: str) -> None:
+        """Discard a finished application transcript without touching a new owner."""
+        with self._condition:
+            if self._owner is None and self._session_id == session_id:
+                self._segments.clear()
+                self._partial = ""
+                self._finished_at = None
+                self._private_owner = None
+                self._changed()
 
     def _listen(self, asr: ZipformerAsr, vad: SileroVad,
                 session_id: str, cancelled: threading.Event) -> None:
@@ -161,6 +177,7 @@ class SpeechService:
         finally:
             with self._condition:
                 if self._session_id == session_id:
+                    self._active = False
                     self._owner = None
                     self._cancelled = None
                     self._partial = ""

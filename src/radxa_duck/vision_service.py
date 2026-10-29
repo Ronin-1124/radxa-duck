@@ -99,6 +99,8 @@ class VisionService:
         self._error = None
         self._latest = None
         self._captured_at = 0.0
+        self._camera_active = False
+        self._camera_resource = None
         self._stats = {"frames": 0}
         self._resources: list[object] = []
         # An initializer whose own cleanup failed cannot be reconstructed safely.
@@ -115,6 +117,7 @@ class VisionService:
         with self._condition:
             return {"type": "state", "schema_version": 1, "revision": self._revision,
                     "state": self._state, "ready": not self._closing and not self._fatal and not self._suspended,
+                    "active": self._camera_active,
                     "maintenance": self._suspended,
                     "session_id": self._session_id, "owned": owner is not None and owner == self._owner,
                     "settings": dict(self._settings), "stats": dict(self._stats),
@@ -122,6 +125,7 @@ class VisionService:
                     "capabilities": {"transport": "jpeg-websocket-v1", "available_models": sorted(self._models),
                                      "rotations": [0, 90, 180, 270], "default_settings": dict(self._defaults),
                                      "max_fps": 15, "max_jpeg_bytes": MAX_JPEG_BYTES,
+                                     "camera_present": Path(self._camera_config.device).exists(),
                                      "jpeg_quality": JPEG_QUALITY, "capture_size": [640, 480],
                                      "ack_timeout_seconds": 3}}
 
@@ -198,6 +202,14 @@ class VisionService:
             header["frame_age_ms"] = (time.monotonic() - self._captured_at) * 1000
             return PreviewFrame(header, self._latest.jpeg)
 
+    def observe_frame(self) -> PreviewFrame | None:
+        """Copy the current mailbox without acquiring or changing the camera."""
+        with self._condition:
+            if (self._state != "streaming" or self._latest is None
+                    or time.monotonic() - self._captured_at > MAX_FRAME_AGE):
+                return None
+            return PreviewFrame(self._latest.header, self._latest.jpeg)
+
     def suspend(self, timeout: float = 15) -> None:
         """Block new preview and wait for camera/NPU cleanup before maintenance."""
         with self._condition:
@@ -226,6 +238,11 @@ class VisionService:
         for resource in reversed(self._resources):
             try:
                 resource.close()
+                if resource is self._camera_resource:
+                    with self._condition:
+                        self._camera_active = False
+                        self._camera_resource = None
+                        self._changed()
             except Exception as exc:
                 retained.append(resource)
                 failures.append(str(exc))
@@ -255,7 +272,11 @@ class VisionService:
             camera = Camera(CameraConfig(device=self._camera_config.device, rotation=settings["rotation"]),
                             cancelled=cancelled)
             self._resources.append(camera)
+            self._camera_resource = camera
             camera.__enter__()
+            with self._condition:
+                self._camera_active = True
+                self._changed()
             first_published = None
             while not cancelled.is_set():
                 began = time.monotonic()
@@ -303,6 +324,7 @@ class VisionService:
                     self._fatal = True
                     self._error, self._state = cleanup_failure, "error"
                 else:
+                    self._camera_active = False
                     self._owner = self._session_id = self._cancelled = None
                     self._error = failure
                     self._state = "error" if failure else "idle"
@@ -315,6 +337,7 @@ class VisionService:
             if failure:
                 self._error, self._state, self._fatal = failure, "error", True
             else:
+                self._camera_active = False
                 self._owner = self._session_id = self._cancelled = None
                 self._state = "closed"
             self._changed()

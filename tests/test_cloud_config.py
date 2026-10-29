@@ -105,6 +105,21 @@ class CloudConfigTests(unittest.TestCase):
         self.assert_code("invalid_request", store.save, {"api_key": ""}, expected_revision=4)
         self.assertEqual(store.snapshot()["revision"], 4)
 
+    def test_runtime_snapshot_is_private_revisioned_and_detached_from_storage(self):
+        store = self.store()
+        self.assert_code("not_configured", store.runtime_snapshot)
+        store.save(CONFIG, expected_revision=0)
+        saved = store.runtime_snapshot(expected_revision=1)
+        self.assertEqual(saved["api_key"], FAKE_KEY)
+        saved["model"] = "mutated"
+        self.assertEqual(store.runtime_snapshot()["model"], "example-model")
+        self.assertNotIn("api_key", store.snapshot())
+        self.assert_code("conflict", store.runtime_snapshot, expected_revision=0)
+        for value in (True, -1, "1", 2**53):
+            self.assert_code("invalid_request", store.runtime_snapshot, expected_revision=value)
+        store.close()
+        self.assert_code("closed", store.runtime_snapshot)
+
     def test_field_validation_rejects_invalid_config_without_a_write(self):
         store = self.store()
         changes = ({"provider": "other"}, {"extra": True}, {"model": ""}, {"model": "a b"},

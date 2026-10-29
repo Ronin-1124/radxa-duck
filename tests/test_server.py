@@ -128,6 +128,35 @@ class ServerTests(unittest.TestCase):
         self.assertTrue(self.service.closed)
         self.assertTrue(self.vision.closed)
 
+    def test_application_socket_streams_through_real_session_worker_and_cleans_up(self):
+        from types import SimpleNamespace
+        from radxa_duck.app_service import AppService
+        from test_app_service import Cloud, Output
+
+        cloud = Cloud()
+        def applications(speech, vision, **_kwargs):
+            return AppService(speech, vision, cloud=cloud,
+                              cloud_config=SimpleNamespace(snapshot=lambda: {"configured": True}),
+                              output=Output(speech))
+
+        app = self.make_app(apps_factory=applications)
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/api/apps/status").status_code, 200)
+            self.assertFalse(client.get("/api/apps/actions").json()["available"])
+            with client.websocket_connect("/api/apps/live", headers={"origin": "http://testserver"}) as socket:
+                self.assertFalse(socket.receive_json()["owned"])
+                self.assertIsNone(self.service.owner)
+                socket.send_json({"type": "start", "scene": "companion"})
+                self.receive(socket, lambda value: value.get("owned") is True)
+                socket.send_json({"type": "submit", "request_id": "integration-turn", "text": "hello"})
+                end = self.receive(socket, lambda value: value.get("type") == "turn_end")
+                self.assertEqual(end["state"], "succeeded")
+                self.assertEqual(cloud.calls[0][0], "hello")
+                self.assertIsNone(self.service.owner)
+                self.assertIsNone(self.vision.owner)
+        self.assertTrue(cloud.closed)
+        self.assertEqual(app.state.apps.snapshot()["reply"], "")
+
     def test_vision_and_speech_routes_can_run_and_stop_independently(self):
         with TestClient(self.make_app()) as client, self.connect(client) as speech:
             speech.receive_json()

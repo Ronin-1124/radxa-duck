@@ -323,6 +323,25 @@ class VisionServiceTests(unittest.TestCase):
         state = self.streaming(service)
         self.assertIsNone(service.latest_frame("owner", state["session_id"], 0))
 
+    def test_observation_reads_existing_frame_without_acquiring_or_changing_owner(self):
+        session = self.harness.session()
+        session.camera_cleanup.release.clear()
+        service = self.service()
+        self.assertIsNone(service.observe_frame())
+        service.start('owner')
+        self.streaming(service)
+        observed = service.observe_frame()
+        self.assertEqual(observed.jpeg, JPEG)
+        self.assertTrue(service.snapshot('owner')['owned'])
+        self.assertTrue(service.snapshot()['active'])
+        service.stop('owner')
+        self.assertTrue(session.camera_cleanup.entered.wait(WAIT))
+        self.assertIsNone(service.observe_frame())
+        self.assertTrue(service.snapshot()['active'], 'Capture remains active until camera cleanup completes')
+        session.camera_cleanup.release.set()
+        self.wait(service, lambda s: s['state'] == 'idle')
+        self.assertFalse(service.snapshot()['active'])
+
     def test_stop_retains_ownership_until_camera_and_detector_are_released(self):
         session = self.harness.session()
         session.camera_cleanup.release.clear()

@@ -319,6 +319,47 @@ class SpeechServiceTests(unittest.TestCase):
         self.assertFalse(service.snapshot("owner")["owned"])
         self.assertEqual(self.harness.capture_calls, 1)
 
+    def test_private_application_transcript_is_hidden_from_voice_socket_observers(self):
+        from starlette.testclient import TestClient
+        from radxa_duck.server import create_app
+        from test_server import FakeVision
+
+        self.harness.session([update("private partial", ["private final"])])
+        service = self.service()
+        service.start("app-owner", private=True)
+        with service._condition:
+            self.assertTrue(service._condition.wait_for(
+                lambda: bool(service.snapshot("app-owner")["segments"]), WAIT))
+        app = create_app(Path("model"), Path("vad"), origins=("http://testserver",),
+                         service_factory=lambda *_: service,
+                         vision_service_factory=lambda *_a, **_k: FakeVision())
+        with TestClient(app) as client:
+            with client.websocket_connect("/api/speech/live", headers={"origin": "http://testserver"}) as observer:
+                state = observer.receive_json()
+                self.assertEqual(state["partial_text"], "")
+                self.assertEqual(state["segments"], [])
+                self.assertFalse(state["owned"])
+                self.assertEqual(service.snapshot("app-owner")["segments"][0]["text"], "private final")
+        self.assertEqual(service.snapshot("unrelated")["segments"], [])
+
+    def test_application_transcript_clear_cannot_erase_an_active_or_new_session(self):
+        session = self.harness.session()
+        service = self.service()
+        service.start("app-owner")
+        self.wait(service, lambda state: state["state"] == "listening")
+        session_id = service.snapshot()["session_id"]
+        with service._condition:
+            service._segments.append({"id": 1, "text": "private application text"})
+        service.clear_transcript(session_id)
+        self.assertTrue(service.snapshot()["segments"])
+        service.stop("app-owner")
+        self.wait(service, lambda state: state["state"] == "idle")
+        service.clear_transcript("a-different-session")
+        self.assertTrue(service.snapshot()["segments"])
+        service.clear_transcript(session_id)
+        self.assertEqual(service.snapshot()["segments"], [])
+        self.assertTrue(session.capture_released.is_set())
+
     def test_capture_error_releases_resources_and_allows_restart(self):
         first = self.harness.session(fail_capture=CaptureError("Microphone failed", code="device_unavailable"))
         second = self.harness.session()

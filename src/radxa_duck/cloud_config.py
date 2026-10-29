@@ -1,7 +1,7 @@
 """Private, revisioned cloud configuration and bounded OpenAI-compatible checks.
 
-Only redacted snapshots leave the store. A connection check uses the saved URL
-and never follows redirects or includes response bodies in public errors.
+Public snapshots contain no credentials. The internal runtime snapshot is
+reserved for cloud adapters; it is never exposed by a management route.
 """
 
 from __future__ import annotations
@@ -219,6 +219,23 @@ class CloudConfigStore:
     def snapshot(self):
         with self._locked():
             return self._public(self._load())
+
+    def runtime_snapshot(self, *, expected_revision: int | None = None):
+        """Return a private copy for a single cloud operation, without a lock.
+
+        The returned API key belongs only in the adapter's request headers.
+        It must never be used as an API response, task result or log payload.
+        """
+        if expected_revision is not None and (type(expected_revision) is not int
+                                             or not 0 <= expected_revision <= MAX_REVISION):
+            raise CloudConfigError("invalid_request", "expected_revision must be a nonnegative integer")
+        with self._locked():
+            saved = self._load()
+            if not saved["revision"]:
+                raise CloudConfigError("not_configured", "Save cloud configuration before using cloud applications")
+            if expected_revision is not None and saved["revision"] != expected_revision:
+                raise CloudConfigError("conflict", "Cloud configuration changed; refresh before using it")
+            return deepcopy(saved)
 
     def save(self, config: dict, *, expected_revision: int):
         if type(expected_revision) is not int or not 0 <= expected_revision < MAX_REVISION:
