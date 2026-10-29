@@ -1,17 +1,32 @@
 /** Resident robot observation. These messages never transfer ownership of the brain. */
 export type BrainState = 'starting' | 'running' | 'paused' | 'stopped' | 'error'
 export type BrainActivity = 'idle' | 'listening' | 'thinking' | 'speaking' | 'acting'
-export type BrainAction = 'pause' | 'resume' | 'enable_microphone' | 'disable_microphone' | 'cancel_task'
+type LegacyBrainAction = 'pause' | 'resume' | 'enable_microphone' | 'disable_microphone' | 'cancel_task'
+export type BrainAction = LegacyBrainAction | 'enable_camera' | 'disable_camera'
+export interface CloudCheck {
+  state: 'unknown' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+  revision: number | null; checked_at: string | null; error_code: string | null
+}
+export interface VoiceStage {
+  state: 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped'
+  task_id: string | null; updated_at: string | null; error_code: string | null
+}
+export interface VoiceFeedback {
+  reply_available: boolean; synthesis: VoiceStage; playback: VoiceStage
+  input: { state: string; pause_reason: string | null; error_code: string | null }
+}
 export interface BrainStatus {
   schema_version: 1; type: 'brain_status'; instance_id: string; revision: number; sampled_at: string
   state: BrainState; activity: BrainActivity; events_available: boolean
   identity: { name: string; revision: number; active_revision: number }
   microphone: { available: boolean; enabled: boolean; active: boolean }
   camera: { available: boolean; enabled: boolean; active: boolean }
-  cloud: { configured: boolean; model: string | null; health: 'ready' | 'error' | 'unknown' }
+  cloud: { configured: boolean; model: string | null; health: 'ready' | 'error' | 'unknown'
+    revision?: number | null; connection_check?: CloudCheck; answer?: CloudCheck }
+  voice?: VoiceFeedback
   motion: { available: boolean; state: 'ready' | 'busy' | 'unavailable' | 'error' }
   task: null | { id: string; kind: string; state: 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled'; summary: string }
-  controls: Record<BrainAction, boolean>
+  controls: Record<LegacyBrainAction, boolean> & Partial<Record<'enable_camera' | 'disable_camera', boolean>>
 }
 export interface IdentityProfile { name: string; description: string; personality: string; expression_style: string }
 export interface IdentityConfig {
@@ -31,6 +46,14 @@ const text = (v: unknown, max = 256): v is string => typeof v === 'string' && v.
 const id = (v: unknown): v is string => text(v, 128) && /^[A-Za-z0-9_.:-]{1,128}$/.test(v)
 const integer = (v: unknown, max = Number.MAX_SAFE_INTEGER): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 && v <= max
 const sensor = (v: unknown): boolean => object(v) && ['available', 'enabled', 'active'].every(k => typeof v[k] === 'boolean')
+const timestamp = (v: unknown): v is string => text(v, 64) && Number.isFinite(Date.parse(v))
+const errorCode = (v: unknown): boolean => v === null || typeof v === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(v)
+const cloudCheck = (v: unknown): boolean => object(v) && ['unknown', 'running', 'succeeded', 'failed', 'cancelled'].includes(v.state as string)
+  && (v.revision === null || integer(v.revision)) && (v.checked_at === null || timestamp(v.checked_at)) && errorCode(v.error_code)
+const voiceStage = (v: unknown): boolean => object(v) && ['idle', 'running', 'succeeded', 'failed', 'cancelled', 'skipped'].includes(v.state as string)
+  && (v.task_id === null || id(v.task_id)) && (v.updated_at === null || timestamp(v.updated_at)) && errorCode(v.error_code)
+const voiceFeedback = (v: unknown): boolean => object(v) && typeof v.reply_available === 'boolean' && voiceStage(v.synthesis) && voiceStage(v.playback)
+  && object(v.input) && text(v.input.state, 64) && errorCode(v.input.pause_reason) && errorCode(v.input.error_code)
 export function isBrainStatus(v: unknown): v is BrainStatus {
   return object(v) && v.schema_version === 1 && v.type === 'brain_status' && id(v.instance_id) && integer(v.revision)
     && text(v.sampled_at, 64) && Number.isFinite(Date.parse(v.sampled_at))
@@ -40,10 +63,15 @@ export function isBrainStatus(v: unknown): v is BrainStatus {
     && v.identity.active_revision <= v.identity.revision && sensor(v.microphone) && sensor(v.camera)
     && object(v.cloud) && typeof v.cloud.configured === 'boolean' && (v.cloud.model === null || text(v.cloud.model, 128))
     && ['ready', 'error', 'unknown'].includes(v.cloud.health as string)
+    && (v.cloud.revision === undefined || v.cloud.revision === null || integer(v.cloud.revision))
+    && (v.cloud.connection_check === undefined || cloudCheck(v.cloud.connection_check))
+    && (v.cloud.answer === undefined || cloudCheck(v.cloud.answer))
+    && (v.voice === undefined || voiceFeedback(v.voice))
     && object(v.motion) && typeof v.motion.available === 'boolean' && ['ready', 'busy', 'unavailable', 'error'].includes(v.motion.state as string)
     && (v.task === null || object(v.task) && id(v.task.id) && text(v.task.kind, 64)
       && ['running', 'cancelling', 'succeeded', 'failed', 'cancelled'].includes(v.task.state as string) && text(v.task.summary, 1000))
     && object(v.controls) && ['pause', 'resume', 'enable_microphone', 'disable_microphone', 'cancel_task'].every(k => typeof (v.controls as Record<string, unknown>)[k] === 'boolean')
+    && ['enable_camera', 'disable_camera'].every(k => (v.controls as Record<string, unknown>)[k] === undefined || typeof (v.controls as Record<string, unknown>)[k] === 'boolean')
 }
 export function isIdentityConfig(v: unknown): v is IdentityConfig {
   return object(v) && v.schema_version === 1 && v.type === 'identity_config' && integer(v.revision) && integer(v.active_revision)

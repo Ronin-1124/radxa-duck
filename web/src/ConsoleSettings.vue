@@ -5,6 +5,7 @@ import { ChevronDown, Cloud, Cpu, Mic, Settings2, UserRound, Wifi, Wrench, X } f
 import ConsolePreferences from './ConsolePreferences.vue'
 import IdentitySettings from './IdentitySettings.vue'
 import CloudSettings from './CloudSettings.vue'
+import BrainRuntimeSettings from './BrainRuntimeSettings.vue'
 import DeviceAudio from './DeviceAudio.vue'
 import DeviceNetwork from './DeviceNetwork.vue'
 import DeviceMaintenance from './DeviceMaintenance.vue'
@@ -46,7 +47,7 @@ onBeforeUnmount(()=>{dialog.value?.close();document.body.style.overflow=oldOverf
    <div class="settings-body">
     <section v-if="discard" class="discard-changes" role="alert"><strong>{{ t('discardTitle') }}</strong><div><button type="button" class="ui-button keep-editing" @click="discard=false">{{ t('keep') }}</button><button type="button" class="ui-button ui-button--danger" @click="emit('close')">{{ t('discard') }}</button></div></section>
     <section v-if="visited.has('identity')" v-show="tab==='identity'" :aria-label="t('identity')"><h3 class="settings-section-title">{{ t('identity') }}</h3><IdentitySettings ref="role" /></section>
-    <section v-if="visited.has('brain')" v-show="tab==='brain'" :aria-label="t('brain')"><CloudSettings ref="cloud" /></section>
+    <section v-if="visited.has('brain')" v-show="tab==='brain'" :aria-label="t('brain')"><BrainRuntimeSettings /><CloudSettings ref="cloud" /></section>
     <section v-if="visited.has('device')" v-show="tab==='device'" :aria-label="t('device')" class="device-settings">
      <div class="device-facts"><div class="device-model"><Cpu :size="20" aria-hidden="true" /><h3>{{ displayDeviceModel(device?.model)||device?.hostname||t('unknown') }}</h3><span v-if="deviceStale" class="console-label">{{ t('stale') }}</span></div><dl><div v-for="fact in [{key:'hostname',value:device?.hostname},{key:'os',value:device?.os},{key:'kernel',value:device?.kernel},{key:'version',value:device?.app_version}]" :key="fact.key"><dt>{{ t(fact.key) }}</dt><dd>{{ fact.value||'—' }}</dd></div></dl></div>
      <div v-for="item in [{key:'audio',icon:Mic},{key:'network',icon:Wifi},{key:'maintenance',icon:Wrench}]" :key="item.key" class="device-disclosure"><button type="button" :aria-expanded="opened===item.key" :aria-controls="`${id}-${item.key}`" @click="opened=opened===item.key?null:item.key"><component :is="item.icon" :size="18" :stroke-width="1.6" aria-hidden="true" /><span>{{ t(item.key) }}</span><ChevronDown :size="16" :class="{rotated:opened===item.key}" aria-hidden="true" /></button><div v-if="opened===item.key" :id="`${id}-${item.key}`" class="disclosure-content"><DeviceAudio v-if="item.key==='audio'" /><DeviceNetwork v-if="item.key==='network'" /><DeviceMaintenance v-if="item.key==='maintenance'" /></div></div>
