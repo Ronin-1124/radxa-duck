@@ -1,0 +1,37 @@
+[Unit]
+Description=Radxa Duck resident interaction service
+Wants=network-online.target
+After=network-online.target sound.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=radxa-duck
+Group=radxa-duck
+SupplementaryGroups=audio video
+StateDirectory=radxa-duck
+StateDirectoryMode=0700
+RuntimeDirectory=radxa-duck
+RuntimeDirectoryMode=0700
+WorkingDirectory=/var/lib/radxa-duck
+ExecStart=/usr/bin/python3 -P /usr/lib/radxa-duck/entrypoint.py --config /etc/radxa-duck/config.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=control-group
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+# Debian 12 / CPython 3.11 / ARM64. NPU runtime is provided by the Radxa OS.
+numpy==1.24.2
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
+opencv-python-headless==4.10.0.84
+starlette==1.10.0
+uvicorn==0.53.0
+websockets==16.0
+anyio==4.15.1
+click==8.5.0
+h11==0.16.0
+typing-extensions==4.16.0
+idna==3.20

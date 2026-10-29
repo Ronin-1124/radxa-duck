@@ -27,3 +27,8 @@ __pycache__/
 /web/test-results/
 /web/playwright-report/
 *.tsbuildinfo
+
+# Release packages and build staging.
+/dist/
+/build/
+*.egg-info/

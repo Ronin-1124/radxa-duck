@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "host": "0.0.0.0",
+  "port": 8765,
+  "origins": [],
+  "local_origins": true,
+  "model_dir": "/usr/share/radxa-duck/models/asr",
+  "vad_model": "/usr/share/radxa-duck/models/vad.onnx",
+  "vision_models": {
+    "yolov8n": "/usr/share/radxa-duck/models/vision/yolov8n.rknn",
+    "yolo26n": "/usr/share/radxa-duck/models/vision/yolo26n.rknn",
+    "yolo26s": "/usr/share/radxa-duck/models/vision/yolo26s.rknn"
+  },
+  "camera_device": "/dev/video0",
+  "camera_rotation": 0,
+  "brain_camera_enabled": true,
+  "microphone_enabled": true,
+  "tts_model_dir": null,
+  "tts_volume": 45,
+  "tts_speaker_id": 0,
+  "duck_sound_dir": "/usr/share/radxa-duck/sounds/microduck",
+  "duck_volume": 100,
+  "state_dir": "/var/lib/radxa-duck",
+  "web_root": "/usr/share/radxa-duck/web"
+}
