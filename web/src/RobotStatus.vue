@@ -3,22 +3,29 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Activity, Camera, Check, CircleHelp, Cloud, Cpu, MemoryStick, Mic, MicOff, Pause, Play, RefreshCw, Square, Thermometer, Zap } from '@lucide/vue'
 import { displayDeviceModel } from './device-model'
+import { cloudAnswerState, sensorState } from './capability-state'
+import type { BrainStatus } from './console-protocol'
 import { useRobotConsole } from './useRobotConsole'
 import UiAlert from './UiAlert.vue'
+type BrainSensor = BrainStatus['camera'] | undefined
 const { device, brain, connection, deviceStale, brainStale, brainCheckedAt, fresh, unavailable, pending, controlError, outcomeUnknown, refreshing, refresh, control, reconcile } = useRobotConsole()
 const { t, locale } = useI18n({useScope:'local',messages:{
- 'zh-CN':{name:'小鸭',robot:'RADXA DUCK',unknown:'状态未知',waiting:'等待大脑接入',starting:'正在启动',paused:'交互已暂停',stopped:'大脑未运行',error:'需要留意',idle:'自在待命',listening:'正在听你说',thinking:'正在思考',speaking:'正在回答',acting:'正在执行',brain:'大脑',running:'运行中',notConnected:'尚未接入',previous:'上次同步 {time}',read:'刷新状态',pause:'暂停交互',resume:'恢复交互',mute:'关闭麦克风',unmute:'开启麦克风',cancel:'停止当前任务',pending:'等待确认',mic:'麦克风',camera:'摄像头',cloud:'云端模型',motion:'运动控制',activeMic:'正在收音',activeCamera:'正在采集',enabled:'已启用 · 空闲',disabled:'已关闭',unavailable:'不可用',ready:'就绪',busy:'执行中',unconfigured:'未配置',notReported:'未报告',cpu:'CPU',memory:'内存',temperature:'温度',uptime:'已运行',day:'天',hour:'小时',minute:'分钟',current:'当前任务',latest:'最近任务',succeeded:'已完成',failed:'未完成',cancelled:'已取消',taskRunning:'执行中',cancelling:'正在停止',stale:'状态暂未更新',disconnected:'网页已断连，机器人运行状态未知',controlUnknown:'操作结果未确认，请重新读取状态。',controlFailure:'操作未完成，请刷新状态后重试。',query:'重新读取',deviceStale:'设备指标为上次读数',brainPending:'大脑状态待接入',warning:'异常'},
- en:{name:'Duck',robot:'RADXA DUCK',unknown:'State unknown',waiting:'Awaiting brain',starting:'Starting up',paused:'Interaction paused',stopped:'Brain stopped',error:'Needs attention',idle:'At ease',listening:'Listening to you',thinking:'Thinking',speaking:'Responding',acting:'In motion',brain:'Brain',running:'Running',notConnected:'Not connected',previous:'Last synced {time}',read:'Refresh status',pause:'Pause interaction',resume:'Resume interaction',mute:'Disable microphone',unmute:'Enable microphone',cancel:'Stop current task',pending:'Awaiting confirmation',mic:'Microphone',camera:'Camera',cloud:'Cloud model',motion:'Motion',activeMic:'Capturing audio',activeCamera:'Capturing frames',enabled:'Enabled · idle',disabled:'Disabled',unavailable:'Unavailable',ready:'Ready',busy:'Executing',unconfigured:'Not configured',notReported:'Not reported',cpu:'CPU',memory:'Memory',temperature:'Temperature',uptime:'Uptime',day:'d',hour:'h',minute:'m',current:'Current task',latest:'Last task',succeeded:'Completed',failed:'Failed',cancelled:'Cancelled',taskRunning:'In progress',cancelling:'Stopping',stale:'Status is out of date',disconnected:'Web disconnected. Robot state is unknown.',controlUnknown:'Outcome unconfirmed. Read the current state.',controlFailure:'The operation could not be completed. Refresh and retry.',query:'Read state',deviceStale:'Device metrics are from the last reading',brainPending:'Brain status pending',warning:'Error'}
+ 'zh-CN':{name:'小鸭',robot:'RADXA DUCK',unknown:'状态未知',waiting:'等待大脑接入',starting:'正在启动',paused:'交互已暂停',stopped:'大脑未运行',error:'需要留意',idle:'自在待命',listening:'正在听你说',thinking:'正在思考',speaking:'正在回答',acting:'正在执行',brain:'大脑',running:'运行中',notConnected:'尚未接入',previous:'上次同步 {time}',read:'刷新状态',pause:'暂停交互',resume:'恢复交互',mute:'关闭麦克风',unmute:'开启麦克风',cancel:'停止当前任务',pending:'等待确认',mic:'麦克风',camera:'摄像头',cloud:'云端模型',motion:'运动控制',activeMic:'正在收音',activeCamera:'正在采集',enabled:'已启用 · 空闲',disabled:'未启用',unavailable:'能力不可用',ready:'就绪',busy:'执行中',unconfigured:'未配置',notReported:'未报告',cpu:'CPU',memory:'内存',temperature:'温度',uptime:'已运行',day:'天',hour:'小时',minute:'分钟',current:'当前任务',latest:'最近任务',succeeded:'已完成',failed:'未完成',cancelled:'已取消',taskRunning:'执行中',cancelling:'正在停止',stale:'状态暂未更新',disconnected:'网页已断连，机器人运行状态未知',controlUnknown:'操作结果未确认，请重新读取状态。',controlFailure:'操作未完成，请刷新状态后重试。',query:'重新读取',deviceStale:'设备指标为上次读数',brainPending:'大脑状态待接入',warning:'异常',verified:'回答已验证',verificationPending:'已配置 · 待验证',verificationFailed:'模型调用失败'},
+ en:{name:'Duck',robot:'RADXA DUCK',unknown:'State unknown',waiting:'Awaiting brain',starting:'Starting up',paused:'Interaction paused',stopped:'Brain stopped',error:'Needs attention',idle:'At ease',listening:'Listening to you',thinking:'Thinking',speaking:'Responding',acting:'In motion',brain:'Brain',running:'Running',notConnected:'Not connected',previous:'Last synced {time}',read:'Refresh status',pause:'Pause interaction',resume:'Resume interaction',mute:'Disable microphone',unmute:'Enable microphone',cancel:'Stop current task',pending:'Awaiting confirmation',mic:'Microphone',camera:'Camera',cloud:'Cloud model',motion:'Motion',activeMic:'Capturing audio',activeCamera:'Capturing frames',enabled:'Enabled · idle',disabled:'Not enabled',unavailable:'Capability unavailable',ready:'Ready',busy:'Executing',unconfigured:'Not configured',notReported:'Not reported',cpu:'CPU',memory:'Memory',temperature:'Temperature',uptime:'Uptime',day:'d',hour:'h',minute:'m',current:'Current task',latest:'Last task',succeeded:'Completed',failed:'Failed',cancelled:'Cancelled',taskRunning:'In progress',cancelling:'Stopping',stale:'Status is out of date',disconnected:'Web disconnected. Robot state is unknown.',controlUnknown:'Outcome unconfirmed. Read the current state.',controlFailure:'The operation could not be completed. Refresh and retry.',query:'Read state',deviceStale:'Device metrics are from the last reading',brainPending:'Brain status pending',warning:'Error',verified:'Answer verified',verificationPending:'Configured · unverified',verificationFailed:'Model call failed'}
 }})
 const phase = computed(() => !fresh.value ? unavailable.value && !brain.value ? 'waiting' : 'unknown' : brain.value!.state === 'running' ? brain.value!.activity : brain.value!.state)
 const name = computed(() => brain.value?.identity.name || t('name'))
+const interactionAction = computed(() => brain.value?.controls.resume ? 'resume' : brain.value?.controls.pause ? 'pause' : null)
 const capabilities = computed(() => {
  const b = fresh.value ? brain.value : null
- const sensorState = (sensor: {available:boolean;enabled:boolean;active:boolean} | undefined, active:string) => !sensor ? t('unknown') : !sensor.available ? t('unavailable') : sensor.active ? t(active) : sensor.enabled ? t('enabled') : t('disabled')
+ const sensorText = (sensor: BrainSensor, active: string) => {
+  const state = sensorState(sensor)
+  return t(state === 'active' ? active : state)
+ }
  return [
-  {key:'mic',icon:Mic,value:sensorState(b?.microphone,'activeMic'),active:b?.microphone.active},
-  {key:'camera',icon:Camera,value:sensorState(b?.camera,'activeCamera'),active:b?.camera.active},
-  {key:'cloud',icon:Cloud,value:!b ? t('unknown') : !b.cloud.configured ? t('unconfigured') : b.cloud.health === 'ready' ? (b.cloud.model || t('ready')) : b.cloud.health === 'error' ? t('warning') : t('unknown'),active:b?.cloud.health === 'ready'},
+  {key:'mic',icon:Mic,value:sensorText(b?.microphone,'activeMic'),active:b?.microphone.active},
+  {key:'camera',icon:Camera,value:sensorText(b?.camera,'activeCamera'),active:b?.camera.active},
+  {key:'cloud',icon:Cloud,value:t(cloudAnswerState(b?.cloud)),detail:b?.cloud.configured?b.cloud.model:null,active:b?.cloud.health === 'ready'},
   {key:'motion',icon:Zap,value:!b ? t('unknown') : !b.motion.available ? t('unavailable') : t(b.motion.state === 'error' ? 'warning' : b.motion.state),active:b?.motion.state === 'busy'},
  ]
 })
@@ -41,14 +48,14 @@ const synced = computed(() => brainCheckedAt.value ? t('previous',{time:new Intl
    <div class="presence-content">
     <div class="presence-copy"><h1 id="robot-name">{{ name }}</h1><p class="robot-phase" role="status">{{ t(phase) }}</p><p class="sync-time">{{ synced || (displayDeviceModel(device?.model) || device?.hostname || '—') }}</p>
      <div v-if="fresh" class="brain-controls">
-      <button v-if="brain?.state === 'paused' ? brain.controls.resume : brain?.controls.pause" class="ui-button" type="button" :disabled="!!pending || outcomeUnknown" @click="control(brain!.state === 'paused' ? 'resume' : 'pause')"><component :is="brain?.state === 'paused' ? Play : Pause" :size="16" aria-hidden="true" />{{ t(pending === 'pause' || pending === 'resume' ? 'pending' : brain?.state === 'paused' ? 'resume' : 'pause') }}</button>
+      <button v-if="interactionAction" class="ui-button" type="button" :disabled="!!pending || outcomeUnknown" @click="control(interactionAction)"><component :is="interactionAction === 'resume' ? Play : Pause" :size="16" aria-hidden="true" />{{ t(pending === 'pause' || pending === 'resume' ? 'pending' : interactionAction) }}</button>
       <button v-if="brain?.microphone.enabled ? brain.controls.disable_microphone : brain?.controls.enable_microphone" class="ui-icon-button" type="button" :disabled="!!pending || outcomeUnknown" :aria-label="t(brain?.microphone.enabled ? 'mute' : 'unmute')" :title="t(brain?.microphone.enabled ? 'mute' : 'unmute')" @click="control(brain!.microphone.enabled ? 'disable_microphone' : 'enable_microphone')"><component :is="brain?.microphone.enabled ? MicOff : Mic" :size="18" aria-hidden="true" /></button>
      </div>
      <button v-else type="button" class="status-refresh ui-button" :disabled="refreshing" @click="refresh(true)"><RefreshCw :size="15" :class="{spinning:refreshing}" aria-hidden="true" />{{ t('read') }}</button>
     </div>
     <div class="presence-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit-trace"></div><div class="presence-shadow"></div><div class="presence-orb"><div class="orb-highlight"></div><div class="orb-face"><span></span><span></span></div><div class="orb-mouth"></div></div><span class="orbit-dot"></span></div>
    </div>
-   <div class="capability-strip"><div v-for="item in capabilities" :key="item.key" class="capability-item" :title="item.value"><span class="capability-icon" :class="{active:item.active}"><component :is="item.icon" :size="19" :stroke-width="1.6" aria-hidden="true" /></span><div><span class="console-label">{{ t(item.key) }}</span><strong>{{ item.value }}</strong></div></div></div>
+   <div class="capability-strip"><div v-for="item in capabilities" :key="item.key" class="capability-item" :title="item.detail ? `${item.value} · ${item.detail}` : item.value"><span class="capability-icon" :class="{active:item.active}"><component :is="item.icon" :size="19" :stroke-width="1.6" aria-hidden="true" /></span><div><span class="console-label">{{ t(item.key) }}</span><strong>{{ item.value }}</strong><span v-if="item.detail" class="capability-detail">{{ item.detail }}</span></div></div></div>
   </section>
   <UiAlert v-if="connection === 'offline' || brainStale && brain" tone="info" role="status" class="console-state-notice">{{ connection === 'offline' ? t('disconnected') : t('stale') }}</UiAlert>
   <UiAlert v-if="controlError" role="alert"><span>{{ t(outcomeUnknown ? 'controlUnknown' : 'controlFailure') }}</span><button type="button" class="ui-button" :disabled="refreshing" @click="reconcile">{{ t('query') }}</button></UiAlert>
@@ -95,7 +102,8 @@ h1 { margin:0; font-size:clamp(32px,4vw,48px); line-height:1.2; font-weight:550;
 .capability-icon { display:grid; place-items:center; width:38px; height:38px; border-radius:13px; flex-shrink:0; color:var(--muted); background:var(--background); }
 .capability-icon.active { color:var(--accent); background:var(--accent-soft); }
 .capability-item > div { min-width:0; }
-.capability-item strong { display:block; font-size:13px; font-weight:500; margin-top:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.capability-item strong { display:block; font-size:13px; font-weight:500; line-height:1.5; margin-top:6px; overflow-wrap:anywhere; }
+.capability-detail { display:block; margin-top:5px; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .device-metrics { display:flex; align-items:center; justify-content:space-between; gap:28px; padding:14px 26px; }
 .device-identity { display:flex; gap:12px; align-items:center; color:var(--muted); max-width:30%; }
 .device-identity strong { font-size:12px; font-weight:500; display:block; color:var(--text); line-height:1.6; overflow-wrap:anywhere; }

@@ -5,6 +5,8 @@ import { Eye, EyeOff, KeyRound, RefreshCw, RotateCcw, Save, TestTube2 } from '@l
 import UiAlert from './UiAlert.vue'
 import UiEmptyState from './UiEmptyState.vue'
 import { useCloudSettings, type CloudField } from './useCloudSettings'
+import { useRobotConsole } from './useRobotConsole'
+import { cloudAnswerState } from './capability-state'
 
 const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages: {
   'zh-CN': {
@@ -27,10 +29,10 @@ const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages
     testUnknown: '设备是否已接收测试请求尚未确认。可以查询任务，或使用同一请求重新提交。',
     testNeedsSave: '先保存当前更改，再测试设备上已保存的配置。', testNeedsConfig: '保存服务地址和模型后，即可测试连接。', testInProgress: '设备正在测试已保存配置，完成后可保存新的更改或再次测试。',
     testHint: '连接测试检查服务与模型列表；实际对话能力需在应用中验证。',
-    queryTask: '查询任务', retrySame: '重试同一请求', testTitle: '连接测试', testEmpty: '尚无连接测试记录',
+    queryTask: '查询任务', retrySame: '重试同一请求', testTitle: '连接检查', checkedAt: '检查时间', answerTitle: '实际模型回答', verified: '回答已验证', verificationPending: '已配置 · 待验证', verificationFailed: '模型调用失败', unknown: '状态未知', unconfigured: '未配置', testEmpty: '尚无连接测试记录',
     testCurrentConfig: '当前保存的配置', testEarlierConfig: '此前保存的配置', elapsed: '用时 {time} ms', previousResult: '此结果对应此前保存的配置，当前配置尚未通过本次测试验证。',
     taskStale: '任务状态未更新，请重新查询；下方为上次读取的结果。', resultInvalid: '暂时无法确认测试结果，请重新查询任务。',
-    testStates: { queued: '等待测试', running: '正在测试已保存配置', succeeded: '连接成功，模型可用', failed: '连接测试失败', cancelled: '测试已取消', interrupted: '测试已中断' },
+    testStates: { queued: '等待测试', running: '正在测试已保存配置', succeeded: '服务可达 · 模型已列出', failed: '连接测试失败', cancelled: '测试已取消', interrupted: '测试已中断' },
     errors: { network_error: '无法连接设备，请检查局域网连接后重试。', timeout: '设备响应超时，请重新查询状态。', forbidden: '当前网页未获准执行此操作，请检查访问地址。', invalid_response: '设备返回的数据暂时无法识别。', unavailable: '服务暂时不可用，请稍后重试。', management_unavailable: '设备管理服务尚未就绪。', cloud_unavailable: '云端服务暂时不可用。', config_unavailable: '设备云端配置暂时无法读取或保存。', tasks_unavailable: '设备任务记录暂时不可用。', invalid_request: '配置格式未被设备接受，请检查服务地址、模型和密钥。', conflict: '设备配置或任务状态已改变，请重新读取。', not_configured: '请先保存云端配置。', authentication_failed: '云端服务未接受当前密钥，请检查密钥。', permission_denied: '云端服务拒绝访问，请检查服务权限。', rate_limited: '云端服务请求受限，请稍后再试。', endpoint_unavailable: '云端模型列表接口不可用，请检查服务地址。', tls_failed: '无法建立云端加密连接，请检查地址与证书。', model_unavailable: '云端服务未列出配置的模型，请检查模型名称。', response_too_large: '云端模型列表过大，测试未完成。', interrupted: '服务重启导致测试中断，请重新查询。', cancelled: '操作已取消。', operation_failed: '操作未完成，请检查设备与云端配置后重试。' },
   },
   en: {
@@ -53,15 +55,18 @@ const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages
     testUnknown: 'It is unclear whether the device accepted the test. Check task status or resubmit the same request.',
     testNeedsSave: 'Save your changes before testing the configuration stored on the device.', testNeedsConfig: 'Save a service URL and model before testing the connection.', testInProgress: 'The device is testing its saved configuration. Save new changes or test again after it finishes.',
     testHint: 'This check verifies the service connection and model list. Validate conversation capabilities in an application.',
-    queryTask: 'Check task', retrySame: 'Retry same request', testTitle: 'Connection test', testEmpty: 'No connection test recorded yet',
+    queryTask: 'Check task', retrySame: 'Retry same request', testTitle: 'Connection check', checkedAt: 'Checked at', answerTitle: 'Actual model answer', verified: 'Answer verified', verificationPending: 'Configured · unverified', verificationFailed: 'Model call failed', unknown: 'State unknown', unconfigured: 'Not configured', testEmpty: 'No connection test recorded yet',
     testCurrentConfig: 'Currently saved configuration', testEarlierConfig: 'Previously saved configuration', elapsed: '{time} ms elapsed', previousResult: 'This result belongs to a previously saved configuration and does not verify the current configuration.',
     taskStale: 'Task status is not current. Check again; the last received result is shown below.', resultInvalid: 'The test result cannot be confirmed yet. Check task status again.',
-    testStates: { queued: 'Queued for testing', running: 'Testing saved configuration', succeeded: 'Connected; model available', failed: 'Connection test failed', cancelled: 'Test cancelled', interrupted: 'Test interrupted' },
+    testStates: { queued: 'Queued for testing', running: 'Testing saved configuration', succeeded: 'Service reachable · model listed', failed: 'Connection test failed', cancelled: 'Test cancelled', interrupted: 'Test interrupted' },
     errors: { network_error: 'Cannot reach the device. Check your local network and retry.', timeout: 'The device timed out. Check status again.', forbidden: 'This page is not allowed to perform the operation. Check its address.', invalid_response: 'The device returned unrecognized data.', unavailable: 'The service is unavailable. Please retry later.', management_unavailable: 'Device management is not ready.', cloud_unavailable: 'The cloud service is unavailable.', config_unavailable: 'Cloud configuration cannot be read or saved on the device.', tasks_unavailable: 'Device task history is unavailable.', invalid_request: 'The device did not accept the configuration format. Check the URL, model, and key.', conflict: 'Device configuration or task state changed. Read it again.', not_configured: 'Save cloud configuration first.', authentication_failed: 'The cloud service rejected the key. Check your credentials.', permission_denied: 'The cloud service denied access. Check its permissions.', rate_limited: 'The cloud service is rate limited. Try again later.', endpoint_unavailable: 'The models endpoint is unavailable. Check the service URL.', tls_failed: 'The encrypted cloud connection failed. Check the URL and certificate.', model_unavailable: 'The cloud service did not list this model. Check the model name.', response_too_large: 'The cloud model list exceeded the test limit.', interrupted: 'A service restart interrupted testing. Check status again.', cancelled: 'The operation was cancelled.', operation_failed: 'The operation did not complete. Check device and cloud settings before retrying.' },
   },
 } })
 const id = useId()
 const cloud = useCloudSettings()
+const { brain, fresh } = useRobotConsole()
+const answerCloud = computed(() => fresh.value ? brain.value?.cloud : undefined)
+const answerState = computed(() => cloudAnswerState(answerCloud.value))
 const { saved, draft, touched, keyMode, showKey, loading, saving, testing, busy, errors, changed, loadError, actionError,
   conflict, saveUnknown, saveSuccess, resetMessage, testUnknown, canSave, canTest, taskError, taskRefreshing, activeTest, latestTest, testResult } = cloud
 const clearConfirmation = ref(false)
@@ -81,6 +86,11 @@ const taskState = computed(() => {
   if (!task) return ''
   if (task.state === 'succeeded' && (!testResult.value || testResult.value.state !== 'succeeded' || testResult.value.model_available !== true)) return t('resultInvalid')
   return t(`testStates.${task.state}`)
+})
+const checkedAt = computed(() => {
+  const task = latestTest.value
+  return task && ['succeeded', 'failed'].includes(task.state)
+    ? new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(task.updated_utc)) : null
 })
 const currentResult = computed(() => !!saved.value && !!testResult.value && saved.value.revision === testResult.value.revision)
 const testTone = computed(() => taskError.value ? 'neutral' : latestTest.value?.state === 'succeeded' && currentResult.value
@@ -187,7 +197,8 @@ defineExpose({ hasUnsavedChanges: changed, busy: computed(() => saving.value || 
         <p class="reset-message" role="status" aria-atomic="true">{{ saveSuccess ? t('saveDone') : resetMessage ? t('resetDone') : '' }}</p>
       </form>
       <div v-if="testUnknown" class="confirmation" role="status"><p>{{ t('testUnknown') }}</p><div class="confirmation-actions"><button type="button" class="button ui-button" :disabled="busy || taskRefreshing" @click="cloud.recoverTest()">{{ t('queryTask') }}</button><button type="button" class="button ui-button" :disabled="busy || taskRefreshing" @click="cloud.test(true)">{{ t('retrySame') }}</button></div></div>
-      <section class="test-results" :aria-labelledby="`${id}-test-title`"><div class="test-heading"><h3 :id="`${id}-test-title`">{{ t('testTitle') }}</h3><button type="button" class="button ui-button" :disabled="taskRefreshing" @click="cloud.refreshTasks()"><RefreshCw :size="16" aria-hidden="true" />{{ t('queryTask') }}</button></div><UiAlert v-if="taskError" class="operation-error" role="status">{{ t('taskStale') }}</UiAlert><div v-if="latestTest" class="test-result" :data-state="latestTest.state" :data-tone="testTone"><p class="test-state" role="status">{{ taskState }}</p><UiAlert v-if="taskFailure" class="test-error" role="status">{{ errorText(taskFailure) }}</UiAlert><p v-if="testResult" class="test-meta">{{ t(currentResult ? 'testCurrentConfig' : 'testEarlierConfig') }} · {{ t('elapsed', { time: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(testResult.elapsed_ms) }) }}</p><p v-if="testResult && saved && !currentResult" class="test-meta">{{ t('previousResult') }}</p><progress v-if="latestTest.state === 'queued' || latestTest.state === 'running'" :value="latestTest.progress ?? undefined" max="100" :aria-label="t('testTitle')"></progress></div><UiEmptyState v-else compact :icon="TestTube2" :title="t('testEmpty')" /></section>
+      <section class="test-results" :aria-labelledby="`${id}-test-title`"><div class="test-heading"><h3 :id="`${id}-test-title`">{{ t('testTitle') }}</h3><button type="button" class="button ui-button" :disabled="taskRefreshing" @click="cloud.refreshTasks()"><RefreshCw :size="16" aria-hidden="true" />{{ t('queryTask') }}</button></div><UiAlert v-if="taskError" class="operation-error" role="status">{{ t('taskStale') }}</UiAlert><div v-if="latestTest" class="test-result" :data-state="latestTest.state" :data-tone="testTone"><p class="test-state" role="status">{{ taskState }}</p><UiAlert v-if="taskFailure" class="test-error" role="status">{{ errorText(taskFailure) }}</UiAlert><p v-if="checkedAt" class="test-meta test-time">{{ t('checkedAt') }} · <time :datetime="latestTest!.updated_utc">{{ checkedAt }}</time></p><p v-if="testResult" class="test-meta">{{ t(currentResult ? 'testCurrentConfig' : 'testEarlierConfig') }} · {{ t('elapsed', { time: new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(testResult.elapsed_ms) }) }}</p><p v-if="testResult && saved && !currentResult" class="test-meta">{{ t('previousResult') }}</p><progress v-if="latestTest.state === 'queued' || latestTest.state === 'running'" :value="latestTest.progress ?? undefined" max="100" :aria-label="t('testTitle')"></progress></div><UiEmptyState v-else compact :icon="TestTube2" :title="t('testEmpty')" /></section>
+      <div class="answer-verification" :data-state="answerState" role="status"><div><h3>{{ t('answerTitle') }}</h3><span v-if="answerCloud?.configured && answerCloud.model" class="answer-model">{{ answerCloud.model }}</span></div><span>{{ t(answerState) }}</span></div>
     </section>
 
     <dialog ref="clearDialog" class="ui-dialog clear-dialog" :aria-labelledby="`${id}-clear-title`" :aria-describedby="`${id}-clear-hint`"
@@ -207,7 +218,11 @@ defineExpose({ hasUnsavedChanges: changed, busy: computed(() => saving.value || 
 .cloud-settings .draft-notice { padding:0; border:0; background:transparent; margin-bottom:24px; }
 .cloud-settings .cloud-fields { gap:22px 18px; }
 .cloud-settings .section-heading { margin-bottom:16px; }
-.cloud-settings .test-results:has(.ui-empty-state) { display:none; }
+.answer-verification { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-top:24px; padding-top:22px; border-top:1px solid var(--border); }
+.answer-verification > span { color:var(--muted); font-size:12px; text-align:end; }
+.answer-verification[data-state="verified"] > span { color:var(--accent); }
+.answer-verification[data-state="verificationFailed"] > span { color:var(--offline); }
+.answer-model { display:block; max-width:30ch; margin-top:7px; color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
 
 .settings-card { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-soft); }
 .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }

@@ -140,9 +140,9 @@ test('tests only saved configuration and displays the matching completed result'
   Object.assign(io.tasks[0]!, { state: 'succeeded', phase: 'testing', progress: 100,
     updated_utc: '2026-10-27T02:01:00+00:00', result: loadedTaskResult(2) })
   await page.getByRole('button', { name: '查询任务', exact: true }).click()
-  await expect(page.locator('.test-state')).toHaveText('连接成功，模型可用')
+  await expect(page.locator('.test-state')).toHaveText('服务可达 · 模型已列出')
   await expect(page.locator('.test-result')).toHaveAttribute('data-tone', 'success')
-  await expect(page.locator('.test-meta')).toContainText('当前保存的配置 · 用时 25 ms')
+  await expect(page.locator('.test-result')).toContainText('当前保存的配置 · 用时 25 ms')
   expect(io.posts()).toHaveLength(1)
 })
 
