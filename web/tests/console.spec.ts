@@ -192,11 +192,11 @@ test('observer paints and acknowledges frames without requesting capture', async
 })
 test('temporary preview releases only its lease and leaves resident capture observable', async ({ page }) => {
   const camera={cameraActive:false};const io=await mockConsole(page,camera);await page.goto('/vision')
-  await page.getByRole('button',{name:'临时预览',exact:true}).click();const observer=io.observers[0]!
-  await expect(page.getByRole('button',{name:'关闭临时预览',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'临时采集',exact:true}).click();const observer=io.observers[0]!
+  await expect(page.getByRole('button',{name:'结束临时采集',exact:true})).toBeEnabled()
   await sendFrame(page,observer);await expect(page.locator('.camera-image')).toBeVisible()
   camera.cameraActive=true
-  await page.getByRole('button',{name:'关闭临时预览',exact:true}).click()
+  await page.getByRole('button',{name:'结束临时采集',exact:true}).click()
   await expect(page.locator('.observer-label')).toHaveText('仅观察')
   await expect(page.locator('.camera-status')).toHaveText('实时画面')
   expect(observer.commands.filter(c=>String(c.type).startsWith('preview.')).map(c=>c.type)).toEqual(['preview.start','preview.stop'])
@@ -275,15 +275,15 @@ test('task cancellation targets a task and waits for actual cancellation', async
 test('pagehide releases temporary preview and restored browsing only observes', async ({ page }) => {
   const io=await mockConsole(page)
   await page.goto('/vision')
-  await page.getByRole('button',{name:'临时预览',exact:true}).click()
-  await expect(page.getByRole('button',{name:'关闭临时预览',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'临时采集',exact:true}).click()
+  await expect(page.getByRole('button',{name:'结束临时采集',exact:true})).toBeEnabled()
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})))
   await expect.poll(()=>io.observers[0]!.closed).toBe(true)
   await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})))
   await expect.poll(()=>io.observers.length).toBe(2)
   expect(io.observers[0]!.commands.map(c=>c.type)).toEqual(['preview.start'])
   expect(io.observers[1]!.commands).toEqual([])
-  await expect(page.getByRole('button',{name:'临时预览',exact:true})).toBeEnabled()
+  await expect(page.getByRole('button',{name:'临时采集',exact:true})).toBeEnabled()
   expect(io.requests.every(r=>r.method==='GET')).toBe(true)
 })
 
@@ -333,11 +333,11 @@ test('stopping temporary preview invalidates a decode that finishes later', asyn
     HTMLImageElement.prototype.decode=function(){return decode.call(this).then(()=>new Promise<void>(resolve=>{Object.assign(window,{finishObserverDecode:resolve})}))}
   })
   const io=await mockConsole(page);await page.goto('/vision')
-  await page.getByRole('button',{name:'临时预览',exact:true}).click()
+  await page.getByRole('button',{name:'临时采集',exact:true}).click()
   const observer=io.observers[0]!
   await sendFrame(page,observer)
   await expect.poll(()=>page.evaluate(()=>typeof (window as unknown as {finishObserverDecode:unknown}).finishObserverDecode)).toBe('function')
-  await page.getByRole('button',{name:'关闭临时预览',exact:true}).click()
+  await page.getByRole('button',{name:'结束临时采集',exact:true}).click()
   await expect(page.locator('.camera-placeholder')).toContainText('摄像头空闲')
   await page.evaluate(()=>(window as unknown as {finishObserverDecode:()=>void}).finishObserverDecode())
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))

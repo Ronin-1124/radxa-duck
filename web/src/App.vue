@@ -3,11 +3,13 @@ import { RouterView } from 'vue-router'
 import AppShell from './AppShell.vue'
 import { provideUiPreferences } from './useUiPreferences'
 import { provideRobotConsole } from './useRobotConsole'
+import { provideViewPreferences } from './useViewPreferences'
 import './ui.css'
 import './console.css'
 
 provideUiPreferences()
 provideRobotConsole()
+provideViewPreferences()
 </script>
 
 <template>

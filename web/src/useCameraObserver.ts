@@ -1,19 +1,19 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Ref } from 'vue'
 import { createRequestId, ManagementApiError, request } from './management-api'
 import { isObserverFrame, isObserverStatus, object, type ObserverFrame, type ObserverStatus } from './console-protocol'
 interface ObserverInfo { schema_version:1; type:'vision_observer_info'; available:boolean; max_jpeg_bytes:number }
 function isInfo(v:unknown):v is ObserverInfo {return object(v)&&v.schema_version===1&&v.type==='vision_observer_info'&&typeof v.available==='boolean'&&typeof v.max_jpeg_bytes==='number'&&Number.isSafeInteger(v.max_jpeg_bytes)&&v.max_jpeg_bytes>=4&&v.max_jpeg_bytes<=2097152}
 /** Subscriptions observe only. Only an explicit preview.start may acquire a temporary camera lease. */
-export function useCameraObserver(getImage: () => HTMLImageElement | undefined) {
+export function useCameraObserver(getImage: () => HTMLImageElement | undefined, enabled: Ref<boolean>) {
  const status=shallowRef<ObserverStatus|null>(null),frame=shallowRef<ObserverFrame|null>(null)
- const imageUrl=ref<string|null>(null),connection=ref<'connecting'|'online'|'offline'|'pending'>('connecting')
+ const imageUrl=ref<string|null>(null),connection=ref<'connecting'|'online'|'offline'|'pending'|'disabled'>(enabled.value?'connecting':'disabled')
  const error=ref<string|null>(null),pending=ref<'start'|'stop'|null>(null),stale=ref(false)
  const available=ref(false)
  let socket:WebSocket|undefined,disposed=false,generation=0,imageGeneration=0,binaryReceived=false,lastFrame=-1,maxBytes=2097152
  let controller:AbortController|undefined,metadata:ObserverFrame|null=null,decoder:HTMLImageElement|undefined,candidateUrl:string|null=null
  let commandId:string|null=null,timer:ReturnType<typeof setTimeout>|undefined,decodeTimer:ReturnType<typeof setTimeout>|undefined,freshTimer:ReturnType<typeof setTimeout>|undefined,commandTimer:ReturnType<typeof setTimeout>|undefined
  let raf1:number|undefined,raf2:number|undefined
- const current=(s:WebSocket,g:number)=>!disposed&&socket===s&&generation===g
+ const current=(s:WebSocket,g:number)=>!disposed&&enabled.value&&socket===s&&generation===g
  function clearImage() {
   imageGeneration++;binaryReceived=false
   clearTimeout(decodeTimer);clearTimeout(freshTimer)
@@ -69,7 +69,7 @@ export function useCameraObserver(getImage: () => HTMLImageElement | undefined) 
   finally {if(current(s,g)&&imageEpoch===imageGeneration){if(!waitingForPaint)clearTimeout(decodeTimer);decoder=undefined;if(candidateUrl===url){URL.revokeObjectURL(url);candidateUrl=null}}}
  }
  async function connect() {
-  close();if(disposed||document.hidden)return
+  close();if(disposed||document.hidden||!enabled.value){connection.value=enabled.value?'offline':'disabled';return}
   const g=generation;connection.value='connecting';error.value=null;available.value=false
   controller=new AbortController()
   try {
@@ -117,9 +117,10 @@ export function useCameraObserver(getImage: () => HTMLImageElement | undefined) 
   send({type:`preview.${action}`,request_id:commandId})
   commandTimer=setTimeout(()=>{if(pending.value)fail('outcome_unknown')},15000)
  }
- function pagehide(){close();connection.value='offline'}
+ function pagehide(){close();connection.value=enabled.value?'offline':'disabled'}
  function visibility(){if(document.hidden)pagehide();else void connect()}
  function pageshow(event:PageTransitionEvent){if(event.persisted&&!document.hidden)void connect()}
+ watch(enabled,value=>{if(value)void connect();else{close();error.value=null;available.value=false;connection.value='disabled'}},{flush:'sync'})
  onMounted(()=>{void connect();document.addEventListener('visibilitychange',visibility);window.addEventListener('pagehide',pagehide);window.addEventListener('pageshow',pageshow)})
  onBeforeUnmount(()=>{disposed=true;close();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('pagehide',pagehide);window.removeEventListener('pageshow',pageshow)})
  const observing=computed(()=>connection.value==='online'&&!!status.value?.camera_active)
