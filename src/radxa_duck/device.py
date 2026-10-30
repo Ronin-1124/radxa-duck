@@ -20,7 +20,7 @@ import threading
 import time
 
 
-SOURCE_VERSION = "0.1.0"
+SOURCE_VERSION = "0.1.1"
 
 
 class _ReadError(ValueError):

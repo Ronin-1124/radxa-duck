@@ -8,7 +8,7 @@
 
 ```sh
 sha256sum -c SHA256SUMS
-sudo apt install ./radxa-duck_0.1.0_arm64.deb
+sudo apt install ./radxa-duck_0.1.1_arm64.deb
 ```
 
 安装后由 `radxa-duck.service` 常驻运行，浏览器访问 `http://板子地址:8765`。语音和视觉默认启用；网页离页或断连不停止大脑。网页预览与大脑采集分别控制，录音、图片和对话不长期保存。云端模型和角色身份在设置中配置，密钥只写入、不回传。
