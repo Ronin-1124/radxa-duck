@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch, type Component } from 'vue'
 import { Check, ChevronDown } from '@lucide/vue'
+import { captureMotionStart, setMotionAnchor } from './anchored-motion'
 
 type Option = { value: string; label: string; description?: string; icon?: Component; lang?: string }
 
@@ -18,6 +19,7 @@ const id = useId()
 const root = ref<HTMLElement>()
 const trigger = ref<HTMLButtonElement>()
 const listbox = ref<HTMLElement>()
+const panel = ref<HTMLElement>()
 const expanded = ref(false)
 const panelOffset = ref(0)
 function positionCompactPanel(): void {
@@ -34,8 +36,31 @@ let search = ''
 let lastTypedAt = 0
 
 function close(): void {
+  if (expanded.value && panel.value) {
+    captureMotionStart(panel.value)
+    setMotionAnchor(panel.value, trigger.value)
+  }
   expanded.value = false
   search = ''
+}
+
+function enterPanel(element: Element): void {
+  const surface = element as HTMLElement
+  surface.inert = false
+  surface.removeAttribute('aria-hidden')
+  surface.style.transition = 'none'
+  surface.style.transform = 'none'
+  setMotionAnchor(surface, trigger.value)
+  surface.style.removeProperty('transform')
+  // Commit the collapsed frame before Vue starts the expansion transition.
+  void surface.offsetWidth
+  surface.style.removeProperty('transition')
+}
+
+function leavePanel(element: Element): void {
+  const surface = element as HTMLElement
+  surface.inert = true
+  surface.setAttribute('aria-hidden', 'true')
 }
 
 function open(index = Math.max(0, selectedIndex.value)): void {
@@ -153,8 +178,8 @@ onBeforeUnmount(() => {
       <span class="trigger-label" :lang="selected?.lang">{{ selected?.label }}</span>
       <ChevronDown :size="14" class="trigger-chevron" aria-hidden="true" />
     </button>
-    <Transition name="preference-panel">
-      <div v-if="expanded" class="preference-panel" :style="compact ? { left: `${panelOffset}px`, right: 'auto' } : undefined">
+    <Transition name="preference-panel" @enter="enterPanel" @before-leave="leavePanel">
+      <div v-if="expanded" ref="panel" class="preference-panel" :style="compact ? { left: `${panelOffset}px`, right: 'auto' } : undefined">
         <div :id="`${id}-label`" class="panel-label">{{ label }}</div>
         <div :id="`${id}-listbox`" ref="listbox" class="preference-options" role="listbox" :aria-labelledby="`${id}-label`">
           <div v-for="(option, index) in options" :id="`${id}-option-${index}`" :key="option.value"
@@ -179,7 +204,7 @@ onBeforeUnmount(() => {
 .compact.preference-select { min-width:46px; }
 .compact .preference-trigger { width:46px; min-height:46px; padding:0; justify-content:center; background:transparent; border-color:transparent; box-shadow:none; }
 .compact .trigger-label,.compact .trigger-chevron { display:none; }
-[data-placement="top"] .preference-panel { top:auto; bottom:calc(100% + 12px); transform-origin:bottom left; }
+[data-placement="top"] .preference-panel { top:auto; bottom:calc(100% + 12px); }
 [data-placement="top"] .preference-panel::before { top:100%; height:16px; }
 
 .preference-select { position: relative; min-width: 142px; }
@@ -204,11 +229,11 @@ onBeforeUnmount(() => {
   position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; width: 248px; max-width: calc(100vw - 40px);
   padding: 8px; border: 1px solid var(--border); border-radius: calc(var(--radius-panel, 24px) - 4px); color: var(--text); background: var(--surface);
   box-shadow: var(--shadow-float, 0 16px 40px -12px rgb(0 0 0 / .2), 0 4px 10px -5px rgb(0 0 0 / .12));
-  transform-origin: top right;
+  transform-origin: center;
 }
 /* Keep a continuous pointer area between the raised trigger and its panel. */
 .preference-panel::before { content: ''; position: absolute; left: 0; right: 0; top: -12px; height: 12px; }
-[data-align="start"] .preference-panel { left: 0; right: auto; transform-origin: top left; }
+[data-align="start"] .preference-panel { left: 0; right: auto; }
 .panel-label { padding: 7px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 500; color: var(--muted); }
 .preference-options { position: relative; max-height: min(300px, calc(100dvh - 210px)); min-height: 60px; overflow-y: auto; overscroll-behavior: contain; }
 .preference-option { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px; border-radius: calc(var(--radius-control, 16px) - 4px); cursor: pointer; touch-action: pan-y; }
@@ -224,10 +249,10 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: no-preference) {
   .preference-trigger { transition: transform var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(.22, 1, .36, 1)), box-shadow var(--motion-fast, 180ms) ease, background-color var(--motion-fast, 180ms) ease, border-color var(--motion-fast, 180ms) ease; }
   .trigger-chevron { transition: transform var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(.22, 1, .36, 1)); }
-  .preference-panel-enter-active { transition: opacity 160ms ease, transform var(--motion-fast, 180ms) var(--ease-out, cubic-bezier(.22, 1, .36, 1)); }
-  .preference-panel-leave-active { transition: opacity 90ms ease; pointer-events: none; }
-  .preference-panel-enter-from { opacity: 0; transform: translateY(-4px); }
-  .preference-panel-leave-to { opacity: 0; }
+  .preference-panel-enter-active { transition: opacity var(--motion-panel-open, 400ms) var(--motion-ease-open, ease-out), transform var(--motion-panel-open, 400ms) var(--motion-ease-open, ease-out); }
+  .preference-panel-leave-active { transition: opacity var(--motion-panel-close, 280ms) var(--motion-ease-close, ease-in), transform var(--motion-panel-close, 280ms) var(--motion-ease-close, ease-in); pointer-events: none; }
+  .preference-panel-enter-from,.preference-panel-leave-to { opacity: 0; transform: var(--anchored-collapsed, none); }
+  .preference-panel-leave-from { opacity: var(--anchored-from-opacity, 1); transform: var(--anchored-from-transform, none); }
 }
 @media (hover: hover) and (pointer: fine) {
   .preference-select:hover .preference-trigger:not(:disabled) { background: var(--background); border-color: color-mix(in srgb, var(--muted) 40%, var(--border)); }

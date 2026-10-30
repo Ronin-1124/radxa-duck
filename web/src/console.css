@@ -2,6 +2,8 @@
   --background:#f4f6f2;--surface:#fff;--sidebar:#fcfdfb;--text:#243020;--muted:#64705e;--border:#e1e7db;
   --accent:#426f25;--accent-soft:#eaf3df;--focus:#477f1c;--status:#65705f;--online:#387b28;--offline:#b44632;
   --radius-control:16px;--radius-panel:28px;--ease-out:cubic-bezier(.22,1,.36,1);--motion-fast:180ms;
+  --motion-panel-open:400ms;--motion-panel-close:280ms;
+  --motion-ease-open:cubic-bezier(.2,.7,.3,1);--motion-ease-close:cubic-bezier(.7,0,.8,.3);
   --shadow-soft:0 8px 32px -16px rgb(36 48 25 / .1),0 1px 3px rgb(36 48 25 / .025);
   --shadow-float:0 24px 72px -24px rgb(36 48 25 / .22),0 4px 16px -8px rgb(36 48 25 / .1);
   --font:Inter,"Noto Sans CJK SC","Microsoft YaHei",system-ui,sans-serif;

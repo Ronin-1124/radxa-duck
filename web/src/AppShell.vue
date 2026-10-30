@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Activity, Camera, Settings2 } from '@lucide/vue'
@@ -10,6 +10,10 @@ import { useRobotConsole } from './useRobotConsole'
 const { connection } = useRobotConsole()
 const route = useRoute(), router = useRouter()
 const settingsButton = ref<HTMLButtonElement>()
+const dock = ref<HTMLElement>(), dockPreferences = ref<HTMLElement>()
+const settingsDockHost = ref<HTMLElement | null>(null)
+const dockCompact = ref(false)
+const dockShift = ref('0px'), dockScale = ref(1)
 const settingsOpen = computed(() => route.query.settings === '1')
 const settingsTab = computed(() => typeof route.query.tab === 'string' ? route.query.tab : 'identity')
 const { t } = useI18n({ useScope:'local', messages:{
@@ -18,6 +22,22 @@ const { t } = useI18n({ useScope:'local', messages:{
 } })
 function openSettings() { void router.push({ query:{...route.query, settings:'1'} }) }
 function closeSettings() { const query = {...route.query}; delete query.settings; delete query.tab; void router.replace({query}) }
+watch(settingsOpen, value => { if (!value) dockCompact.value = false })
+function measureDock() {
+  if (!dock.value || !dockPreferences.value) return
+  const style = getComputedStyle(dock.value)
+  const padding = parseFloat(style.paddingLeft), border = parseFloat(style.borderLeftWidth)
+  dockShift.value = `${dockPreferences.value.offsetLeft - padding}px`
+  dockScale.value = (dockPreferences.value.offsetWidth + 2 * (padding + border)) / dock.value.offsetWidth
+}
+let dockObserver: ResizeObserver | undefined
+onMounted(() => {
+  measureDock()
+  dockObserver = new ResizeObserver(measureDock)
+  if (dock.value) dockObserver.observe(dock.value)
+  if (dockPreferences.value) dockObserver.observe(dockPreferences.value)
+})
+onBeforeUnmount(() => dockObserver?.disconnect())
 </script>
 <template>
   <div class="console-shell">
@@ -32,12 +52,15 @@ function closeSettings() { const query = {...route.query}; delete query.settings
       <div class="web-connection" :data-state="connection" role="status"><span aria-hidden="true"></span>{{ t(connection) }}</div>
     </header>
     <main id="console-main" class="console-main" tabindex="-1"><slot /></main>
-    <div class="utility-dock" :aria-label="t('settings')" role="group">
-      <button ref="settingsButton" type="button" class="dock-settings" :aria-label="t('settings')" :title="t('settings')" :aria-expanded="settingsOpen" aria-haspopup="dialog" @click="openSettings"><Settings2 :size="20" aria-hidden="true" /></button>
+    <Teleport :to="settingsDockHost || 'body'" :disabled="!settingsOpen || !settingsDockHost">
+    <div ref="dock" class="utility-dock" :class="{'is-compact':dockCompact}" :style="{'--dock-shift':dockShift,'--dock-compact-scale':dockScale}" :aria-label="t('settings')" role="group">
+      <span class="dock-surface" aria-hidden="true"></span>
+      <button ref="settingsButton" type="button" class="dock-settings" :aria-label="t('settings')" :title="t('settings')" :aria-expanded="settingsOpen" :aria-hidden="settingsOpen ? true : undefined" :inert="settingsOpen" aria-haspopup="dialog" @click="openSettings"><Settings2 :size="20" aria-hidden="true" /></button>
       <span class="dock-divider" aria-hidden="true"></span>
-      <ConsolePreferences />
+      <div ref="dockPreferences" class="dock-preferences"><ConsolePreferences /></div>
     </div>
-    <ConsoleSettings v-if="settingsOpen" :initial-tab="settingsTab" :opener="settingsButton" @close="closeSettings" />
+    </Teleport>
+    <ConsoleSettings v-if="settingsOpen" :initial-tab="settingsTab" :opener="settingsButton" @dock-host="settingsDockHost=$event" @opening="dockCompact=true" @closing="dockCompact=false" @close="closeSettings" />
   </div>
 </template>
 <style scoped>
@@ -58,9 +81,16 @@ function closeSettings() { const query = {...route.query}; delete query.settings
 .web-connection[data-state="online"] > span { background:var(--online); box-shadow:0 0 0 4px color-mix(in srgb,var(--online) 8%,transparent); }
 .web-connection[data-state="offline"] > span { background:var(--offline); }
 .console-main { padding:28px clamp(20px,4vw,64px) 120px; outline:none; }
-.utility-dock { position:fixed; bottom:max(24px,env(safe-area-inset-bottom)); left:max(24px,env(safe-area-inset-left)); display:flex; gap:5px; align-items:center; z-index:50; padding:5px; border:1px solid var(--border); border-radius:20px; background:color-mix(in srgb,var(--surface) 90%,transparent); backdrop-filter:blur(20px); box-shadow:var(--shadow-soft); }
-.dock-settings { display:grid; place-items:center; width:46px; height:46px; border:0; border-radius:15px; color:var(--muted); background:transparent; cursor:pointer; }
-.dock-divider { width:1px; height:20px; background:var(--border); margin-inline:2px; }
+.utility-dock { --dock-motion-duration:var(--motion-panel-close); --dock-motion-ease:var(--motion-ease-close); position:fixed; bottom:max(24px,env(safe-area-inset-bottom)); left:max(24px,env(safe-area-inset-left)); display:flex; gap:5px; align-items:center; z-index:50; padding:5px; border:1px solid transparent; border-radius:20px; pointer-events:none; }
+.utility-dock.is-compact { --dock-motion-duration:var(--motion-panel-open); --dock-motion-ease:var(--motion-ease-open); }
+.dock-surface { position:absolute; inset:-1px; border:1px solid var(--border); border-radius:20px; background:color-mix(in srgb,var(--surface) 90%,transparent); backdrop-filter:blur(20px); box-shadow:var(--shadow-soft); transform-origin:left center; }
+.dock-settings { position:relative; display:grid; place-items:center; width:46px; height:46px; border:0; border-radius:15px; color:var(--muted); background:transparent; cursor:pointer; pointer-events:auto; }
+.dock-divider { position:relative; width:1px; height:20px; background:var(--border); margin-inline:2px; }
+.dock-preferences { position:relative; pointer-events:auto; }
+.is-compact .dock-surface { transform:scaleX(var(--dock-compact-scale)); }
+.is-compact .dock-preferences { transform:translateX(calc(-1 * var(--dock-shift))); }
+.is-compact .dock-settings,.is-compact .dock-divider { opacity:0; }
+.is-compact .dock-settings svg { transform:scale(.6); }
 .console-skip { position:fixed; top:10px; left:10px; padding:12px; border-radius:12px; background:var(--surface); color:var(--text); transform:translateY(-180%); z-index:200; }
 .console-skip:focus { transform:none; }
 @media (max-width:639px) {
@@ -74,6 +104,10 @@ function closeSettings() { const query = {...route.query}; delete query.settings
  .utility-dock { left:max(16px,env(safe-area-inset-left)); bottom:max(16px,env(safe-area-inset-bottom)); }
 }
 @media (hover:hover) and (pointer:fine) { .dock-settings:hover { color:var(--accent); background:var(--accent-soft); } .view-switch a:hover { color:var(--accent); } }
-@media (prefers-reduced-motion:no-preference) { .switch-indicator { transition:transform .5s var(--ease-out); } .dock-settings { transition:transform .3s var(--ease-out),background .2s; } }
+@media (prefers-reduced-motion:no-preference) {
+ .switch-indicator { transition:transform .5s var(--ease-out); }
+ .dock-surface,.dock-preferences,.dock-divider,.dock-settings svg { transition:transform var(--dock-motion-duration) var(--dock-motion-ease),opacity var(--dock-motion-duration) var(--dock-motion-ease); }
+ .dock-settings { transition:opacity var(--dock-motion-duration) var(--dock-motion-ease),transform .3s var(--ease-out),background .2s; }
+}
 @media (hover:hover) and (pointer:fine) and (prefers-reduced-motion:no-preference) { .dock-settings:hover { transform:translateY(-2px); } }
 </style>
