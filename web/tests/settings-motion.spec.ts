@@ -140,6 +140,52 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 393, height: 873
   })
 }
 
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 393, height: 873 }]) {
+  test(`device disclosure refresh stays in its heading and rapid toggles clean up at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    const io = await mockConsole(page)
+    await page.goto('/overview')
+    const dialog = await openSettings(page)
+    await dialog.getByRole('button', { name: '设备', exact: true }).click()
+    for (const section of [
+      { name: '音频设备', refresh: '刷新音频状态', path: '/api/audio' },
+      { name: '网络', refresh: '刷新网络状态', path: '/api/network/status' },
+      { name: '系统维护', refresh: '刷新维护状态', path: '/api/power/status' },
+    ]) {
+      const toggle = dialog.getByRole('button', { name: section.name, exact: true })
+      await toggle.click()
+      const refresh = dialog.getByRole('button', { name: section.refresh, exact: true })
+      await expect(refresh).toBeEnabled()
+      const [heading, button] = await Promise.all([toggle.boundingBox(), refresh.boundingBox()])
+      expect(Math.abs(heading!.y + heading!.height / 2 - button!.y - button!.height / 2)).toBeLessThan(1)
+      expect(button!.width).toBeGreaterThanOrEqual(44)
+      expect(button!.height).toBeGreaterThanOrEqual(44)
+      expect(await refresh.evaluate(button => !!button.closest('.disclosure-heading') && !button.closest('.disclosure-reveal'))).toBe(true)
+      const before = io.management.requests.filter(request => request.path === section.path).length
+      await refresh.click()
+      await expect.poll(() => io.management.requests.filter(request => request.path === section.path).length).toBe(before + 1)
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    }
+    const audio = dialog.getByRole('button', { name: '音频设备', exact: true })
+    await audio.evaluate(async button => {
+      for (let index = 0; index < 5; index++) {
+        ;(button as HTMLButtonElement).click()
+        await new Promise(requestAnimationFrame)
+      }
+    })
+    await expect(audio).toHaveAttribute('aria-expanded', 'true')
+    await expect(dialog.locator('.device-disclosure-enter-active,.device-disclosure-leave-active')).toHaveCount(0)
+    await expect(dialog.locator('.disclosure-reveal')).toHaveCount(1)
+    await expect(dialog.getByRole('region', { name: '音频设备', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: '刷新音频状态', exact: true })).toBeEnabled()
+    expect(await dialog.locator('.disclosure-reveal').evaluate(element => (element as HTMLElement).inert)).toBe(false)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await audio.click()
+    await expect(dialog.locator('.disclosure-reveal')).toHaveCount(0)
+    expect([...io.requests, ...io.management.requests].every(request => request.method === 'GET')).toBe(true)
+  })
+}
+
 for (const method of ['escape', 'backdrop'] as const) {
   test(`${method} uses the settings exit animation and restores focus`, async ({ page }) => {
     await mockConsole(page)

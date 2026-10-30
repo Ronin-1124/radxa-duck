@@ -7,6 +7,7 @@ import type { AudioStatus } from './management-types'
 import UiAlert from './UiAlert.vue'
 import UiEmptyState from './UiEmptyState.vue'
 
+defineProps<{labelledby?:string}>()
 const id = useId()
 const { t, locale } = useI18n({ useScope: 'local', inheritLocale: true, messages: {
   'zh-CN': {
@@ -143,6 +144,7 @@ async function apply(): Promise<void> {
   }
 }
 function refreshVisible(): void { if (!document.hidden) void refresh() }
+defineExpose({refresh,refreshing:loading,refreshDisabled:busy})
 onMounted(() => {
   refreshVisible()
   interval = setInterval(refreshVisible, 15_000)
@@ -157,8 +159,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="audio-panel" :aria-labelledby="`${id}-audio-title`">
-    <header class="card-heading">
+  <section class="audio-panel" :class="{'is-embedded':labelledby}" :aria-labelledby="labelledby || `${id}-audio-title`">
+    <header v-if="!labelledby" class="card-heading">
       <span class="section-icon ui-section-icon"><AudioLines :size="22" :stroke-width="1.6" aria-hidden="true" /></span>
       <div><h2 :id="`${id}-audio-title`" class="ui-section-title">{{ t('title') }}</h2><p class="ui-section-description">{{ t('description') }}</p></div>
       <button class="refresh-button ui-icon-button" type="button" :aria-label="t('refresh')" :disabled="busy" :aria-busy="loading" @click="refresh"><RefreshCw :size="17" aria-hidden="true" /></button>
@@ -190,6 +192,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .audio-panel { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-soft); }
+.audio-panel.is-embedded { padding:0; border:0; border-radius:0; box-shadow:none; }
+.audio-panel.is-embedded .device-lists { margin-top:0; }
 h2, h3, p { margin: 0; }
 .card-heading { display: flex; align-items: flex-start; gap: 14px; }
 .card-heading > div { min-width: 0; flex: 1; }

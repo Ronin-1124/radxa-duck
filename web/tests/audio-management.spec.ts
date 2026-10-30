@@ -69,7 +69,7 @@ test.describe('board audio management', () => {
     await expect(volume(page)).toHaveValue('66')
     await expect(panel(page)).not.toContainText('音频设置已由设备确认')
     busy = false
-    await panel(page).getByRole('button', { name: '刷新音频状态', exact: true }).click()
+    await page.getByRole('button', { name: '刷新音频状态', exact: true }).click()
     await expect(apply(page)).toBeEnabled()
     await expect(volume(page)).toHaveValue('66')
     await apply(page).click()
@@ -92,7 +92,7 @@ test.describe('board audio management', () => {
     snapshot.output.volume_percent = 35
     await page.clock.runFor(15000)
     await expect.poll(() => mock.requests.filter(request => request.path === '/api/audio').length).toBe(2)
-    await expect(panel(page).getByRole('button', { name: '刷新音频状态', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '刷新音频状态', exact: true })).toBeEnabled()
     await expect(volume(page)).toHaveValue('65')
     await expect(apply(page)).toBeEnabled()
     await panel(page).getByRole('button', { name: '放弃修改', exact: true }).click()
@@ -116,7 +116,7 @@ test.describe('board audio management', () => {
     await volume(page).fill('40')
     snapshot.output.volume_percent = 0
     snapshot.output.muted = true
-    await panel(page).getByRole('button', { name: '刷新音频状态', exact: true }).click()
+    await page.getByRole('button', { name: '刷新音频状态', exact: true }).click()
     await expect(apply(page)).toBeEnabled()
     await expect(volume(page)).toHaveValue('40')
     await expect(panel(page).getByRole('switch')).toHaveAttribute('aria-checked', 'true')

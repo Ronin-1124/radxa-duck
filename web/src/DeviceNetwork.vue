@@ -9,6 +9,7 @@ import ManagementTask from './ManagementTask.vue'
 import UiAlert from './UiAlert.vue'
 import UiEmptyState from './UiEmptyState.vue'
 
+defineProps<{labelledby?:string}>()
 const id = useId()
 const status = shallowRef<NetworkStatus | null>(null)
 const reading = ref(false)
@@ -193,11 +194,12 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', visibility)
   window.removeEventListener('pagehide', clearPassword)
 })
+defineExpose({refresh:load,refreshing:reading,refreshDisabled:reading})
 </script>
 
 <template>
-  <section class="network-card" :aria-labelledby="`${id}-title`">
-    <header class="card-heading"><span class="section-icon ui-section-icon"><Wifi :size="22" :stroke-width="1.6" aria-hidden="true" /></span><div><h2 :id="`${id}-title`" class="ui-section-title">{{ t('title') }}</h2><p class="ui-section-description">{{ t('description') }}</p></div><button class="icon-button ui-icon-button" type="button" :aria-label="t('refresh')" :disabled="reading" :aria-busy="reading" @click="load"><RefreshCw :size="17" aria-hidden="true" /></button></header>
+  <section class="network-card" :class="{'is-embedded':labelledby}" :aria-labelledby="labelledby || `${id}-title`">
+    <header v-if="!labelledby" class="card-heading"><span class="section-icon ui-section-icon"><Wifi :size="22" :stroke-width="1.6" aria-hidden="true" /></span><div><h2 :id="`${id}-title`" class="ui-section-title">{{ t('title') }}</h2><p class="ui-section-description">{{ t('description') }}</p></div><button class="icon-button ui-icon-button" type="button" :aria-label="t('refresh')" :disabled="reading" :aria-busy="reading" @click="load"><RefreshCw :size="17" aria-hidden="true" /></button></header>
     <UiAlert v-if="readError" class="network-error" role="status">{{ status ? t('stale') : errorLabel(readError) }}</UiAlert>
     <p v-else-if="!status" class="note" role="status">{{ t('reading') }}</p>
     <template v-if="status">
@@ -234,6 +236,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .network-card { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-soft); }
+.network-card.is-embedded { padding:0; border:0; border-radius:0; box-shadow:none; }
+.network-card.is-embedded .network-state { margin-top:0; }
 .card-heading { display: flex; align-items: flex-start; gap: 14px; }
 .card-heading > div { min-width: 0; flex: 1; }
 h2, h3, p { margin: 0; }

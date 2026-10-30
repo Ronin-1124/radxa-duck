@@ -8,6 +8,7 @@ import { isActiveTask, useManagementTasks } from './useManagementTasks'
 import ManagementTask from './ManagementTask.vue'
 import UiAlert from './UiAlert.vue'
 
+defineProps<{labelledby?:string}>()
 const id = useId()
 const power = shallowRef<PowerStatus | null>(null)
 const update = shallowRef<UpdateStatus | null>(null)
@@ -158,11 +159,12 @@ onBeforeUnmount(() => {
   dialog.value?.close()
   document.removeEventListener('visibilitychange', visibility)
 })
+defineExpose({refresh:load,refreshing,refreshDisabled:refreshing})
 </script>
 
 <template>
-  <section class="maintenance-card" :aria-labelledby="`${id}-title`">
-    <header class="section-heading"><div class="section-intro"><span class="ui-section-icon"><Wrench :size="22" :stroke-width="1.6" aria-hidden="true" /></span><div><h2 :id="`${id}-title`" class="ui-section-title">{{ t('title') }}</h2><p class="ui-section-description">{{ t('description') }}</p></div></div><button class="icon-button ui-icon-button" type="button" :aria-label="t('refresh')" :disabled="refreshing" :aria-busy="refreshing" @click="load"><RefreshCw :size="17" aria-hidden="true" /></button></header>
+  <section class="maintenance-card" :class="{'is-embedded':labelledby}" :aria-labelledby="labelledby || `${id}-title`">
+    <header v-if="!labelledby" class="section-heading"><div class="section-intro"><span class="ui-section-icon"><Wrench :size="22" :stroke-width="1.6" aria-hidden="true" /></span><div><h2 :id="`${id}-title`" class="ui-section-title">{{ t('title') }}</h2><p class="ui-section-description">{{ t('description') }}</p></div></div><button class="icon-button ui-icon-button" type="button" :aria-label="t('refresh')" :disabled="refreshing" :aria-busy="refreshing" @click="load"><RefreshCw :size="17" aria-hidden="true" /></button></header>
     <div class="maintenance-row update-row">
       <div class="row-intro"><Download :size="21" :stroke-width="1.6" aria-hidden="true" /><div><h3>{{ t('update') }}</h3><p>{{ updateReason }}</p></div></div>
       <dl v-if="update"><div><dt>{{ t('installed') }}</dt><dd>{{ update.installed_version ?? t('noPackage') }}</dd></div><div><dt>{{ t('latest') }}</dt><dd>{{ update.latest_version ?? t('unknown') }}</dd></div></dl>
@@ -189,6 +191,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .maintenance-card { min-width: 0; padding: 26px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); box-shadow: var(--shadow-soft); }
+.maintenance-card.is-embedded { padding:0; border:0; border-radius:0; box-shadow:none; }
+.maintenance-card.is-embedded > .maintenance-row:first-of-type { padding-top:0; border-top:0; }
 h2, h3, p { margin: 0; }
 h3 { color: var(--text); font-size: 13px; font-weight: 600; line-height: 1.7; }
 .section-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 22px; }

@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, Cloud, Cpu, Mic, Settings2, UserRound, Wifi, Wrench, X } from '@lucide/vue'
+import { Cloud, Cpu, Mic, Settings2, UserRound, Wifi, Wrench, X } from '@lucide/vue'
 import IdentitySettings from './IdentitySettings.vue'
 import CloudSettings from './CloudSettings.vue'
 import BrainRuntimeSettings from './BrainRuntimeSettings.vue'
 import DeviceAudio from './DeviceAudio.vue'
 import DeviceNetwork from './DeviceNetwork.vue'
 import DeviceMaintenance from './DeviceMaintenance.vue'
+import DeviceDisclosure from './DeviceDisclosure.vue'
 import { displayDeviceModel } from './device-model'
 import { useRobotConsole } from './useRobotConsole'
 import { captureMotionStart, setMotionAnchor } from './anchored-motion'
@@ -23,8 +24,8 @@ const closing=ref(false)
 const opened=ref<string|null>(null)
 const { device,deviceStale }=useRobotConsole()
 const { t }=useI18n({useScope:'local',messages:{
- 'zh-CN':{settings:'设置',identity:'角色身份',brain:'大脑',device:'设备',close:'关闭设置',tabs:'设置分类',discardTitle:'放弃未保存的更改？',discard:'放弃并关闭',keep:'继续编辑',saving:'正在保存，请稍候',audio:'音频设备',network:'网络',maintenance:'系统维护',os:'系统',kernel:'内核',version:'应用版本',hostname:'主机名',unknown:'未报告',stale:'上次读数'},
- en:{settings:'Settings',identity:'Identity',brain:'Brain',device:'Device',close:'Close settings',tabs:'Settings sections',discardTitle:'Discard unsaved changes?',discard:'Discard and close',keep:'Keep editing',saving:'Saving. Please wait.',audio:'Audio devices',network:'Network',maintenance:'Maintenance',os:'System',kernel:'Kernel',version:'App version',hostname:'Hostname',unknown:'Not reported',stale:'Previous reading'}
+ 'zh-CN':{settings:'设置',identity:'角色身份',brain:'大脑',device:'设备',close:'关闭设置',tabs:'设置分类',discardTitle:'放弃未保存的更改？',discard:'放弃并关闭',keep:'继续编辑',saving:'正在保存，请稍候',audio:'音频设备',network:'网络',maintenance:'系统维护',refreshAudio:'刷新音频状态',refreshNetwork:'刷新网络状态',refreshMaintenance:'刷新维护状态',os:'系统',kernel:'内核',version:'应用版本',hostname:'主机名',unknown:'未报告',stale:'上次读数'},
+ en:{settings:'Settings',identity:'Identity',brain:'Brain',device:'Device',close:'Close settings',tabs:'Settings sections',discardTitle:'Discard unsaved changes?',discard:'Discard and close',keep:'Keep editing',saving:'Saving. Please wait.',audio:'Audio devices',network:'Network',maintenance:'Maintenance',refreshAudio:'Refresh audio status',refreshNetwork:'Refresh network status',refreshMaintenance:'Refresh maintenance status',os:'System',kernel:'Kernel',version:'App version',hostname:'Hostname',unknown:'Not reported',stale:'Previous reading'}
 }})
 const busy=computed(()=>role.value?.busy||cloud.value?.busy)
 function select(value:Tab) {
@@ -90,7 +91,7 @@ onBeforeUnmount(()=>{disposed=true;emit('dock-host',null);dialog.value?.close();
     <section v-if="visited.has('brain')" v-show="tab==='brain'" class="settings-page" :inert="tab!=='brain'" :aria-hidden="tab!=='brain' ? true : undefined" :aria-label="t('brain')"><BrainRuntimeSettings /><CloudSettings ref="cloud" /></section>
     <section v-if="visited.has('device')" v-show="tab==='device'" :aria-label="t('device')" :inert="tab!=='device'" :aria-hidden="tab!=='device' ? true : undefined" class="settings-page device-settings">
      <div class="device-facts"><div class="device-model"><Cpu :size="20" aria-hidden="true" /><h3>{{ displayDeviceModel(device?.model)||device?.hostname||t('unknown') }}</h3><span v-if="deviceStale" class="console-label">{{ t('stale') }}</span></div><dl><div v-for="fact in [{key:'hostname',value:device?.hostname},{key:'os',value:device?.os},{key:'kernel',value:device?.kernel},{key:'version',value:device?.app_version}]" :key="fact.key"><dt>{{ t(fact.key) }}</dt><dd>{{ fact.value||'—' }}</dd></div></dl></div>
-     <div v-for="item in [{key:'audio',icon:Mic},{key:'network',icon:Wifi},{key:'maintenance',icon:Wrench}]" :key="item.key" class="device-disclosure"><button type="button" :aria-expanded="opened===item.key" :aria-controls="`${id}-${item.key}`" @click="opened=opened===item.key?null:item.key"><component :is="item.icon" :size="18" :stroke-width="1.6" aria-hidden="true" /><span>{{ t(item.key) }}</span><ChevronDown :size="16" :class="{rotated:opened===item.key}" aria-hidden="true" /></button><div v-if="opened===item.key" :id="`${id}-${item.key}`" class="disclosure-content"><DeviceAudio v-if="item.key==='audio'" /><DeviceNetwork v-if="item.key==='network'" /><DeviceMaintenance v-if="item.key==='maintenance'" /></div></div>
+     <DeviceDisclosure v-for="item in [{key:'audio',icon:Mic,content:DeviceAudio,refresh:'refreshAudio'},{key:'network',icon:Wifi,content:DeviceNetwork,refresh:'refreshNetwork'},{key:'maintenance',icon:Wrench,content:DeviceMaintenance,refresh:'refreshMaintenance'}]" :id="`${id}-${item.key}`" :key="item.key" :label="t(item.key)" :refresh-label="t(item.refresh)" :icon="item.icon" :content="item.content" :open="opened===item.key" @toggle="opened=opened===item.key?null:item.key" />
     </section>
    </div>
   </div>
@@ -125,21 +126,12 @@ onBeforeUnmount(()=>{disposed=true;emit('dock-host',null);dialog.value?.close();
 dl { display:grid; gap:16px; margin:24px 0 32px; }
 dl > div { display:grid; grid-template-columns:80px 1fr; gap:16px; font-size:12px; }
 dt { color:var(--muted); } dd { margin:0; text-align:right; overflow-wrap:anywhere; }
-.device-disclosure { border-top:1px solid var(--border); }
-.device-disclosure > button { display:flex; align-items:center; gap:12px; width:100%; min-height:65px; padding:16px 0; text-align:start; border:0; background:transparent; color:var(--text); cursor:pointer; font-size:14px; }
-.device-disclosure > button span { flex:1; }
-.device-disclosure > button svg { color:var(--muted); }
-.rotated { transform:rotate(180deg); }
-.disclosure-content { padding:8px 0 24px; }
-.disclosure-content :deep(.audio-panel),.disclosure-content :deep(.network-card),.disclosure-content :deep(.maintenance-card) { padding:0; border:0; border-radius:0; box-shadow:none; }
-.disclosure-content :deep(.ui-section-description),.disclosure-content :deep(.card-heading h2),.disclosure-content :deep(.section-heading h2),.disclosure-content :deep(.section-icon),.disclosure-content :deep(.ui-section-icon) { display:none; }
 @media (max-width:639px) { .settings-panel { width:100%; height:100dvh; border:0; border-radius:0; } .settings-header { padding:calc(16px + env(safe-area-inset-top)) 20px 16px; } .settings-layout { display:flex; flex-direction:column; padding-bottom:76px; } .settings-rail { display:contents; } .settings-tabs { flex:0 0 auto; flex-direction:row; padding:12px 16px; gap:6px; border-right:0; border-bottom:1px solid var(--border); flex-shrink:0; } .settings-tabs button { flex:1; justify-content:center; padding:10px; gap:7px; font-size:12px; } .settings-body { flex:1; min-height:0; padding:24px 20px calc(32px + env(safe-area-inset-bottom)); } }
 @media (prefers-reduced-motion:no-preference) {
  .console-settings[open] .settings-panel { animation:settings-open var(--motion-panel-open) var(--motion-ease-open) both; }
  .console-settings[open]::backdrop { animation:backdrop-open var(--motion-panel-open) var(--motion-ease-open) both; }
  .console-settings[open].is-closing .settings-panel { animation:settings-close var(--motion-panel-close) var(--motion-ease-close) both; }
  .console-settings[open].is-closing::backdrop { animation:backdrop-close var(--motion-panel-close) var(--motion-ease-close) both; }
- .rotated { transition:transform .3s var(--ease-out); }
  @keyframes settings-open { from { opacity:0; transform:var(--anchored-collapsed,none); } to { opacity:1; transform:none; } }
  @keyframes settings-close { from { opacity:var(--anchored-from-opacity,1); transform:var(--anchored-from-transform,none); } to { opacity:0; transform:var(--anchored-collapsed,none); } }
  @keyframes backdrop-open { from { opacity:0; } to { opacity:1; } }
